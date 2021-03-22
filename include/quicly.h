@@ -26,11 +26,10 @@
 extern "C" {
 #endif
 
-#include <netinet/in.h>
+#include "compat.h"
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
-#include <sys/socket.h>
 #include <sys/types.h>
 #include "picotls.h"
 #include "quicly/constants.h"
