@@ -60,6 +60,7 @@
 #define QUICLY_TRANSPORT_PARAMETER_ID_MAX_DATAGRAM_FRAME_SIZE 0x20
 #define QUICLY_TRANSPORT_PARAMETER_ID_MIN_ACK_DELAY 0xff02de1a
 
+FILE *quicly_trace_fp = NULL;
 /**
  * maximum size of token that quicly accepts
  */

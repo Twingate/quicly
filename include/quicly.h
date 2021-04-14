@@ -1273,6 +1273,8 @@ inline void quicly_byte_to_hex(char *dst, uint8_t v)
     dst[1] = "0123456789abcdef"[v & 0xf];
 }
 
+extern FILE *quicly_trace_fp;
+
 #ifdef __cplusplus
 }
 #endif
