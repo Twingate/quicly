@@ -226,15 +226,15 @@ inline uint32_t quicly_rtt_get_pto(quicly_rtt_t *rtt, uint32_t max_ack_delay, ui
 inline void quicly_loss_init(quicly_loss_t *r, const quicly_loss_conf_t *conf, uint32_t initial_rtt, const uint16_t *max_ack_delay,
                              const uint8_t *ack_delay_exponent)
 {
-    *r = (quicly_loss_t){.conf = conf,
-                         .max_ack_delay = max_ack_delay,
-                         .ack_delay_exponent = ack_delay_exponent,
-                         .pto_count = 0,
-                         .time_of_last_packet_sent = 0,
-                         .largest_acked_packet_plus1 = {0},
-                         .total_bytes_sent = 0,
-                         .loss_time = INT64_MAX,
-                         .alarm_at = INT64_MAX};
+    *r = quicly_loss_t{/*.conf =*/ conf,
+                         /*.max_ack_delay =*/ max_ack_delay,
+                         /*.ack_delay_exponent =*/ ack_delay_exponent,
+                         /*.pto_count =*/ 0,
+                         /*.time_of_last_packet_sent =*/ 0,
+                         /*.largest_acked_packet_plus1 =*/ {0},
+                         /*.total_bytes_sent =*/ 0,
+                         /*.loss_time =*/ INT64_MAX,
+                         /*.alarm_at =*/ INT64_MAX};
     quicly_rtt_init(&r->rtt, conf, initial_rtt);
     quicly_sentmap_init(&r->sentmap);
 }

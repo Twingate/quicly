@@ -44,6 +44,10 @@ extern "C" {
 #include "quicly/cid.h"
 #include "quicly/remote_cid.h"
 
+#ifdef _WINDOWS
+#   define __thread __declspec(thread)
+#endif
+
 #ifndef QUICLY_DEBUG
 #define QUICLY_DEBUG 0
 #endif

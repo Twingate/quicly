@@ -40,6 +40,7 @@ INCLUDE_DIRECTORIES(
     deps/klib
     deps/picotls/include
     deps/picotest
+    deps/picotls/picotlsvs/picotls
     include
     ${CMAKE_CURRENT_BINARY_DIR})
 
@@ -78,6 +79,10 @@ SET(UNITTEST_SOURCE_FILES
     t/simple.c
     t/stream-concurrency.c
     t/test.c)
+
+if (WIN32)
+    LIST(APPEND QUICLY_LIBRARY_FILES deps/picotls/picotlsvs/picotls/wintimeofday.c)
+endif()
 
 IF (WITH_DTRACE)
     SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DPICOTLS_USE_DTRACE=1 -DQUICLY_USE_DTRACE=1")
