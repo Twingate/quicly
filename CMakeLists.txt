@@ -1,5 +1,10 @@
-CMAKE_MINIMUM_REQUIRED(VERSION 2.8.11)
-CMAKE_POLICY(SET CMP0003 NEW)
+CMAKE_MINIMUM_REQUIRED(VERSION 3.15)
+CMAKE_POLICY(SET CMP0091 NEW)
+
+# Definitions for Windows
+if (WIN32)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
 
 PROJECT(quicly)
 
@@ -37,6 +42,7 @@ SET(CMAKE_C_FLAGS_RELEASE "-O2")
 
 INCLUDE_DIRECTORIES(
     ${OPENSSL_INCLUDE_DIR}
+    ${OPENSSL_ROOT_DIR}
     deps/klib
     deps/picotls/include
     deps/picotest
