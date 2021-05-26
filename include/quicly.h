@@ -913,7 +913,7 @@ size_t quicly_send_retry(quicly_context_t *ctx, ptls_aead_context_t *token_encry
  * @return 0 if successful, otherwise an error. When an error is returned, the caller must call `quicly_close` to discard the
  *         connection context.
  */
-int quicly_send(quicly_conn_t *conn, quicly_address_t *dest, quicly_address_t *src, struct iovec *datagrams, size_t *num_datagrams,
+int quicly_send(quicly_conn_t *conn, quicly_address_t *dest, quicly_address_t *src, ptls_iovec_t *datagrams, size_t *num_datagrams,
                 void *buf, size_t bufsize);
 /**
  *
