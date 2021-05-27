@@ -4724,7 +4724,7 @@ static int handle_ack_frame(quicly_conn_t *conn, struct st_quicly_handle_payload
             /* process newly acked packet */
             if (state->epoch != sent->ack_epoch)
                 return QUICLY_TRANSPORT_ERROR_PROTOCOL_VIOLATION;
-            int is_late_ack = 0;
+            int is_late_ack __attribute__((unused)) = 0;
             if (sent->ack_eliciting) {
                 includes_ack_eliciting = 1;
                 if (sent->cc_bytes_in_flight == 0) {
