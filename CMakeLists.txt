@@ -1,6 +1,13 @@
 CMAKE_MINIMUM_REQUIRED(VERSION 2.8.11)
 CMAKE_POLICY(SET CMP0003 NEW)
 
+# Definitions for Windows
+if (WIN32)
+    CMAKE_MINIMUM_REQUIRED(VERSION 3.15)
+    CMAKE_POLICY(SET CMP0091 NEW)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
+
 PROJECT(quicly)
 
 INCLUDE(deps/picotls/cmake/dtrace-utils.cmake)
@@ -16,6 +23,7 @@ IF (WITH_DTRACE)
     MESSAGE(STATUS "Enabling USDT support")
 ENDIF ()
 
+MESSAGE(STATUS "Building quic for ${CMAKE_SYSTEM_PROCESSOR}")
 IF ((CMAKE_SIZEOF_VOID_P EQUAL 8) AND
     (CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64") OR
      (CMAKE_SYSTEM_PROCESSOR STREQUAL "amd64") OR
@@ -30,15 +38,18 @@ OPTION(WITH_FUSION "whether or not to use the Fusion AES-GCM engine in the cli b
 IF(NOT CMAKE_BUILD_TYPE)
     SET(CMAKE_BUILD_TYPE Release)
 ENDIF(NOT CMAKE_BUILD_TYPE)
-SET(CMAKE_C_FLAGS "-std=c99 -Wall -g ${CC_WARNING_FLAGS} ${CMAKE_C_FLAGS} -DQUICLY_USE_EMBEDDED_PROBES=1")
+
+SET(CMAKE_C_FLAGS "-std=c99 -Wall -g ${CC_WARNING_FLAGS} ${CMAKE_C_FLAGS}")
 SET(CMAKE_C_FLAGS_DEBUG "-O0" )
 SET(CMAKE_C_FLAGS_RELEASE "-O2")
 
 INCLUDE_DIRECTORIES(
     ${OPENSSL_INCLUDE_DIR}
+    ${OPENSSL_ROOT_DIR}
     deps/klib
     deps/picotls/include
     deps/picotest
+    deps/picotls/picotlsvs/picotls
     include
     ${CMAKE_CURRENT_BINARY_DIR})
 
@@ -77,6 +88,10 @@ SET(UNITTEST_SOURCE_FILES
     t/simple.c
     t/stream-concurrency.c
     t/test.c)
+
+if (WIN32)
+    LIST(APPEND QUICLY_LIBRARY_FILES deps/picotls/picotlsvs/picotls/wintimeofday.c)
+endif()
 
 IF (WITH_DTRACE)
     SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DPICOTLS_USE_DTRACE=1 -DQUICLY_USE_DTRACE=1")
