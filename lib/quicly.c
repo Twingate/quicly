@@ -2076,7 +2076,7 @@ static int client_collected_extensions(ptls_t *tls, ptls_handshake_properties_t 
 
     const uint8_t *src = slots[0].data.base, *end = src + slots[0].data.len;
     quicly_transport_parameters_t params;
-    quicly_cid_t original_dcid, initial_scid, retry_scid = {0};
+    quicly_cid_t original_dcid, initial_scid, retry_scid = {{0}};
 
     /* obtain pointer to initial CID of the peer. It is guaranteeed to exist in the first slot, as TP is received before any frame
      * that updates the CID set. */
