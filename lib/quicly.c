@@ -96,19 +96,6 @@ KHASH_MAP_INIT_INT64(quicly_stream_t, quicly_stream_t *)
 #define QUICLY_PROBE_ESCAPE_UNSAFE_STRING(s, l)
 #endif
 
-#ifdef __GNUC__
-#define _popcountl __builtin_popcountl
-#else
-static inline int _popcountl(uint64_t x)
-{
-    // See https://en.wikipedia.org/wiki/Hamming_weight.
-    x = x - ((x >> 1) & 0x55555555);
-    x = (x & 0x33333333) + ((x >> 2) & 0x33333333);
-    x = (x + (x >> 4)) & 0x0F0F0F0F;
-    return (x * 0x01010101) >> 24;
-}
-#endif
-
 struct st_quicly_cipher_context_t {
     ptls_aead_context_t *aead;
     ptls_cipher_context_t *header_protection;
@@ -2895,7 +2882,7 @@ struct st_quicly_send_context_t {
     /**
      * output buffer into which list of datagrams is written
      */
-    ptls_iovec_t *datagrams;
+    struct iovec *datagrams;
     /**
      * max number of datagrams that can be stored in |packets|
      */
@@ -2955,7 +2942,7 @@ static int commit_send_packet(quicly_conn_t *conn, quicly_send_context_t *s, enu
         *s->dst++ = QUICLY_FRAME_TYPE_PADDING;
 
     if (mode == QUICLY_COMMIT_SEND_PACKET_MODE_FULL_SIZE) {
-        assert(s->num_datagrams == 0 || s->datagrams[s->num_datagrams - 1].len == conn->egress.max_udp_payload_size);
+        assert(s->num_datagrams == 0 || s->datagrams[s->num_datagrams - 1].iov_len == conn->egress.max_udp_payload_size);
         const size_t max_size = conn->egress.max_udp_payload_size - QUICLY_AEAD_TAG_SIZE;
         assert(s->dst - s->payload_buf.datagram <= max_size);
         memset(s->dst, QUICLY_FRAME_TYPE_PADDING, s->payload_buf.datagram + max_size - s->dst);
@@ -3009,7 +2996,7 @@ static int commit_send_packet(quicly_conn_t *conn, quicly_send_context_t *s, enu
 
     if (mode != QUICLY_COMMIT_SEND_PACKET_MODE_COALESCED) {
         conn->super.stats.num_bytes.sent += datagram_size;
-        s->datagrams[s->num_datagrams++] = (ptls_iovec_t){.base = s->payload_buf.datagram, .len = datagram_size};
+        s->datagrams[s->num_datagrams++] = (struct iovec){.iov_base = s->payload_buf.datagram, .iov_len = datagram_size};
         s->payload_buf.datagram += datagram_size;
         s->target.cipher = NULL;
         s->target.first_byte_at = NULL;
@@ -4350,7 +4337,7 @@ void quicly_set_datagram_frame(quicly_conn_t *conn, ptls_iovec_t payload)
     conn->egress.datagram_frame_payload = payload;
 }
 
-int quicly_send(quicly_conn_t *conn, quicly_address_t *dest, quicly_address_t *src, ptls_iovec_t *datagrams, size_t *num_datagrams,
+int quicly_send(quicly_conn_t *conn, quicly_address_t *dest, quicly_address_t *src, struct iovec *datagrams, size_t *num_datagrams,
                 void *buf, size_t bufsize)
 {
     quicly_send_context_t s = {{NULL, -1}, {0}, datagrams, *num_datagrams, 0, {buf, (uint8_t *)buf + bufsize}};
@@ -5453,7 +5440,10 @@ static int handle_stateless_reset(quicly_conn_t *conn)
 static int validate_retry_tag(quicly_decoded_packet_t *packet, quicly_cid_t *odcid, ptls_aead_context_t *retry_aead)
 {
     size_t pseudo_packet_len = 1 + odcid->len + packet->encrypted_off;
-    uint8_t *pseudo_packet = (uint8_t*)malloc(pseudo_packet_len * sizeof(uint8_t));
+    uint8_t *pseudo_packet;
+
+    if ((pseudo_packet = malloc(pseudo_packet_len)) == NULL)
+        return 0;
     pseudo_packet[0] = odcid->len;
     memcpy(pseudo_packet + 1, odcid->cid, odcid->len);
     memcpy(pseudo_packet + 1 + odcid->len, packet->octets.base, packet->encrypted_off);
@@ -5588,7 +5578,7 @@ int quicly_receive(quicly_conn_t *conn, struct sockaddr *dest_addr, struct socka
     case QUICLY_STATE_CLOSING:
         ++conn->egress.connection_close.num_packets_received;
         /* respond with a CONNECTION_CLOSE frame using exponential back-off */
-        if (_popcountl(conn->egress.connection_close.num_packets_received) == 1)
+        if (popcountl(conn->egress.connection_close.num_packets_received) == 1)
             conn->egress.send_ack_at = 0;
         ret = 0;
         goto Exit;

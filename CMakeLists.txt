@@ -1,12 +1,11 @@
-CMAKE_MINIMUM_REQUIRED(VERSION 2.8.11)
-CMAKE_POLICY(SET CMP0003 NEW)
-
-# Definitions for Windows
-if (WIN32)
+IF (WIN32)
     CMAKE_MINIMUM_REQUIRED(VERSION 3.15)
     CMAKE_POLICY(SET CMP0091 NEW)
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-endif()
+ELSE ()
+    CMAKE_MINIMUM_REQUIRED(VERSION 2.8.11)
+    CMAKE_POLICY(SET CMP0003 NEW)
+ENDIF ()
 
 PROJECT(quicly)
 
@@ -40,6 +39,9 @@ IF(NOT CMAKE_BUILD_TYPE)
 ENDIF(NOT CMAKE_BUILD_TYPE)
 
 SET(CMAKE_C_FLAGS "-std=c99 -Wall -g ${CC_WARNING_FLAGS} ${CMAKE_C_FLAGS}")
+IF (NOT WIN32)
+    SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DQUICLY_USE_EMBEDDED_PROBES=1")
+ENDIF ()
 SET(CMAKE_C_FLAGS_DEBUG "-O0" )
 SET(CMAKE_C_FLAGS_RELEASE "-O2")
 
@@ -49,7 +51,6 @@ INCLUDE_DIRECTORIES(
     deps/klib
     deps/picotls/include
     deps/picotest
-    deps/picotls/picotlsvs/picotls
     include
     ${CMAKE_CURRENT_BINARY_DIR})
 
@@ -90,6 +91,7 @@ SET(UNITTEST_SOURCE_FILES
     t/test.c)
 
 if (WIN32)
+    INCLUDE_DIRECTORIES(deps/picotls/picotlsvs/picotls)
     LIST(APPEND QUICLY_LIBRARY_FILES deps/picotls/picotlsvs/picotls/wintimeofday.c)
 endif()
 
