@@ -29,6 +29,7 @@ extern "C" {
 #include <assert.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 #include "quicly/constants.h"
 #include "quicly/sentmap.h"
 
@@ -226,13 +227,12 @@ inline uint32_t quicly_rtt_get_pto(quicly_rtt_t *rtt, uint32_t max_ack_delay, ui
 inline void quicly_loss_init(quicly_loss_t *r, const quicly_loss_conf_t *conf, uint32_t initial_rtt, const uint16_t *max_ack_delay,
                              const uint8_t *ack_delay_exponent)
 {
-    quicly_loss_t loss = {0};
-    loss.conf = conf;
-    loss.max_ack_delay = max_ack_delay;
-    loss.ack_delay_exponent = ack_delay_exponent;
-    loss.loss_time = INT64_MAX;
-    loss.alarm_at = INT64_MAX;
-    *r = loss;
+    memset(r, 0, sizeof(*r));
+    r->conf = conf;
+    r->max_ack_delay = max_ack_delay;
+    r->ack_delay_exponent = ack_delay_exponent;
+    r->loss_time = INT64_MAX;
+    r->alarm_at = INT64_MAX;
     quicly_rtt_init(&r->rtt, conf, initial_rtt);
     quicly_sentmap_init(&r->sentmap);
 }
