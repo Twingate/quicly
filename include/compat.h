@@ -11,6 +11,8 @@
     #include <pthread.h>
 #endif
 
+#include "quicly/constants.h"
+
 // WIN32 redundant?
 #if defined(_WINDOWS) || defined(WIN32)
 # define __thread __declspec(thread)
@@ -29,11 +31,6 @@ struct iovec {
 inline int clz(uint32_t x) {
     unsigned long r = 0;
     _BitScanReverse(&r, x);
-    FMT_ASSERT(x != 0, "");
-    // Static analysis complains about using uninitialized data
-    // "r", but the only way that can happen is if "x" is 0,
-    // which the callers guarantee to not happen.
-    //FMT_SUPPRESS_MSC_WARNING(6102)
     return 31 ^ (int)(r);
 }
 
@@ -47,8 +44,6 @@ inline int clzll(uint64_t x) {
     // Scan the low 32 bits.
     _BitScanReverse(&r, (uint32_t)(x));
 #  endif
-    FMT_ASSERT(x != 0, "");
-    //FMT_SUPPRESS_MSC_WARNING(6102)  // Suppress a bogus static analysis warning.
     return 63 ^ (int)(r);
 }
 
