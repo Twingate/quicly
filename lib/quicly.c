@@ -5587,7 +5587,7 @@ int quicly_accept(quicly_conn_t **conn, quicly_context_t *ctx, struct sockaddr *
     struct {
         struct st_quicly_cipher_context_t ingress, egress;
         int alive;
-    } cipher = {};
+    } cipher = {0};
     ptls_iovec_t payload;
     uint64_t next_expected_pn, pn, offending_frame_type = QUICLY_FRAME_TYPE_PADDING;
     int is_ack_only, ret;
