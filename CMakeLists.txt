@@ -40,7 +40,7 @@ ENDIF(NOT CMAKE_BUILD_TYPE)
 
 SET(CMAKE_C_FLAGS "-std=c99 -Wall -g ${CC_WARNING_FLAGS} ${CMAKE_C_FLAGS}")
 IF (NOT WIN32)
-    SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DQUICLY_USE_EMBEDDED_PROBES=1")
+    SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DQUICLY_USE_TRACER=1 -DQUICLY_USE_EMBEDDED_PROBES=1")
 ENDIF ()
 SET(CMAKE_C_FLAGS_DEBUG "-O0" )
 SET(CMAKE_C_FLAGS_RELEASE "-O2")
@@ -63,6 +63,7 @@ SET(QUICLY_LIBRARY_FILES
     lib/frame.c
     lib/cc-reno.c
     lib/cc-cubic.c
+    lib/cc-pico.c
     lib/defaults.c
     lib/local_cid.c
     lib/loss.c
@@ -73,7 +74,8 @@ SET(QUICLY_LIBRARY_FILES
     lib/retire_cid.c
     lib/sendstate.c
     lib/sentmap.c
-    lib/streambuf.c)
+    lib/streambuf.c
+    ${CMAKE_CURRENT_BINARY_DIR}/quicly-tracer.h)
 
 SET(UNITTEST_SOURCE_FILES
     deps/picotest/picotest.c
@@ -118,9 +120,18 @@ TARGET_LINK_LIBRARIES(quicly LINK_PUBLIC m)
 
 ADD_CUSTOM_COMMAND(
     OUTPUT embedded-probes.h
-    COMMAND ${CMAKE_SOURCE_DIR}/misc/probe2trace.pl -a embedded < ${CMAKE_SOURCE_DIR}/quicly-probes.d > ${CMAKE_CURRENT_BINARY_DIR}/embedded-probes.h
+    COMMAND ${PROJECT_SOURCE_DIR}/misc/probe2trace.pl -a embedded < ${PROJECT_SOURCE_DIR}/quicly-probes.d > ${CMAKE_CURRENT_BINARY_DIR}/embedded-probes.h
     DEPENDS quicly-probes.d misc/probe2trace.pl
     VERBATIM)
+ADD_CUSTOM_COMMAND(
+    OUTPUT quicly-tracer.h
+    COMMAND ${PROJECT_SOURCE_DIR}/misc/probe2trace.pl -a tracer < ${PROJECT_SOURCE_DIR}/quicly-probes.d > ${CMAKE_CURRENT_BINARY_DIR}/quicly-tracer.h
+    DEPENDS quicly-probes.d misc/probe2trace.pl
+    VERBATIM)
+
+ADD_LIBRARY(quicly ${QUICLY_LIBRARY_FILES})
+TARGET_LINK_LIBRARIES(quicly LINK_PUBLIC m)
+
 SET(CLI_FILES ${PICOTLS_OPENSSL_FILES} ${QUICLY_LIBRARY_FILES} src/cli.c embedded-probes.h)
 SET(CLI_COMPILE_FLAGS "-DQUICLY_USE_EMBEDDED_PROBES=1")
 IF (WITH_FUSION)

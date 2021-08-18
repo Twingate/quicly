@@ -20,6 +20,19 @@
  * IN THE SOFTWARE.
  */
 
+/* @appdata
+{
+    "packet_received": ["decrypted"],
+    "stream_on_receive": ["src"],
+    "datagram_send": ["payload"],
+    "datagram_receive": ["payload"],
+    "crypto_update_secret": ["secret"],
+    "crypto_send_key_update": ["secret"],
+    "crypto_receive_key_update": ["secret"],
+    "crypto_receive_key_update_prepare": ["secret"]
+}
+*/
+
 /**
  * Providers of quicly. Name of the arguments are important - they are used as the names of JSON fields when the dtrace script is
  * generated.
@@ -73,6 +86,12 @@ provider quicly {
     probe stream_receive(struct st_quicly_conn_t *conn, int64_t at, struct st_quicly_stream_t *stream, uint64_t off, size_t len);
     probe stream_acked(struct st_quicly_conn_t *conn, int64_t at, int64_t stream_id, uint64_t off, size_t len);
     probe stream_lost(struct st_quicly_conn_t *conn, int64_t at, int64_t stream_id, uint64_t off, size_t len);
+
+    probe reset_stream_send(struct st_quicly_conn_t *conn, int64_t at, int64_t stream_id, uint16_t error_code, uint64_t final_size);
+    probe reset_stream_receive(struct st_quicly_conn_t *conn, int64_t at, int64_t stream_id, uint16_t error_code, uint64_t final_size);
+
+    probe stop_sending_send(struct st_quicly_conn_t *conn, int64_t at, int64_t stream_id, uint16_t error_code);
+    probe stop_sending_receive(struct st_quicly_conn_t *conn, int64_t at, int64_t stream_id, uint16_t error_code);
 
     probe max_data_send(struct st_quicly_conn_t *conn, int64_t at, uint64_t maximum);
     probe max_data_receive(struct st_quicly_conn_t *conn, int64_t at, uint64_t maximum);
