@@ -271,8 +271,13 @@ typedef struct st_quicly_ack_frequency_frame_t {
     uint64_t sequence;
     uint64_t packet_tolerance;
     uint64_t max_ack_delay;
-    uint8_t ignore_order;
+    uint8_t ignore_order : 1;
+    uint8_t ignore_ce : 1;
 } quicly_ack_frequency_frame_t;
+
+#define QUICLY_ACK_FREQUENCY_IGNORE_ORDER_BIT 1
+#define QUICLY_ACK_FREQUENCY_IGNORE_CE_BIT 2
+#define QUICLY_ACK_FREQUENCY_ALL_BITS (QUICLY_ACK_FREQUENCY_IGNORE_ORDER_BIT | QUICLY_ACK_FREQUENCY_IGNORE_CE_BIT)
 
 static uint8_t *quicly_encode_ack_frequency_frame(uint8_t *dst, uint64_t sequence, uint64_t packet_tolerance,
                                                   uint64_t max_ack_delay, int ignore_order);
@@ -598,7 +603,7 @@ inline uint8_t *quicly_encode_stream_data_blocked_frame(uint8_t *dst, quicly_str
 inline int quicly_decode_stream_data_blocked_frame(const uint8_t **src, const uint8_t *end,
                                                    quicly_stream_data_blocked_frame_t *frame)
 {
-    if ((frame->stream_id = quicly_decodev(src, end)) == UINT64_MAX)
+    if ((frame->stream_id = quicly_decodev(src, end)) == -1)
         goto Error;
     if ((frame->offset = quicly_decodev(src, end)) == UINT64_MAX)
         goto Error;
@@ -796,7 +801,7 @@ inline uint8_t *quicly_encode_ack_frequency_frame(uint8_t *dst, uint64_t sequenc
     dst = quicly_encodev(dst, sequence);
     dst = quicly_encodev(dst, packet_tolerance);
     dst = quicly_encodev(dst, max_ack_delay);
-    *dst++ = !!ignore_order;
+    *dst++ = ignore_order ? QUICLY_ACK_FREQUENCY_IGNORE_ORDER_BIT : 0;
     return dst;
 }
 
@@ -810,17 +815,13 @@ inline int quicly_decode_ack_frequency_frame(const uint8_t **src, const uint8_t 
         goto Error;
     if (*src == end)
         goto Error;
-    switch (*(*src)++) {
-    case 0:
-        frame->ignore_order = 0;
-        break;
-    case 1:
-        frame->ignore_order = 1;
-        break;
-    default:
+    if ((**src & ~QUICLY_ACK_FREQUENCY_ALL_BITS) != 0)
         goto Error;
-    }
+    frame->ignore_order = (**src & QUICLY_ACK_FREQUENCY_IGNORE_ORDER_BIT) != 0;
+    frame->ignore_ce = (**src & QUICLY_ACK_FREQUENCY_IGNORE_CE_BIT) != 0;
+    ++*src;
     return 0;
+
 Error:
     return QUICLY_TRANSPORT_ERROR_FRAME_ENCODING;
 }

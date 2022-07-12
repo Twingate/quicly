@@ -3,7 +3,7 @@ IF (WIN32)
     CMAKE_POLICY(SET CMP0091 NEW)
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 ELSE ()
-    CMAKE_MINIMUM_REQUIRED(VERSION 2.8.11)
+    CMAKE_MINIMUM_REQUIRED(VERSION 2.8.12)
     CMAKE_POLICY(SET CMP0003 NEW)
 ENDIF ()
 
@@ -37,12 +37,8 @@ OPTION(WITH_FUSION "whether or not to use the Fusion AES-GCM engine in the cli b
 IF(NOT CMAKE_BUILD_TYPE)
     SET(CMAKE_BUILD_TYPE Release)
 ENDIF(NOT CMAKE_BUILD_TYPE)
-
-SET(CMAKE_C_FLAGS "-std=c99 -Wall -g ${CC_WARNING_FLAGS} ${CMAKE_C_FLAGS}")
-IF (NOT WIN32)
-    SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DQUICLY_USE_EMBEDDED_PROBES=1")
-ENDIF ()
-SET(CMAKE_C_FLAGS_DEBUG "-O0" )
+SET(CMAKE_C_FLAGS "-std=c99 -Wall -g -DQUICLY_USE_TRACER=1 ${CC_WARNING_FLAGS} ${CMAKE_C_FLAGS}")
+SET(CMAKE_C_FLAGS_DEBUG "-O0")
 SET(CMAKE_C_FLAGS_RELEASE "-O2")
 
 INCLUDE_DIRECTORIES(
@@ -63,17 +59,20 @@ SET(QUICLY_LIBRARY_FILES
     lib/frame.c
     lib/cc-reno.c
     lib/cc-cubic.c
+    lib/cc-pico.c
     lib/defaults.c
     lib/local_cid.c
     lib/loss.c
     lib/quicly.c
     lib/ranges.c
+    lib/rate.c
     lib/recvstate.c
     lib/remote_cid.c
     lib/retire_cid.c
     lib/sendstate.c
     lib/sentmap.c
-    lib/streambuf.c)
+    lib/streambuf.c
+    ${CMAKE_CURRENT_BINARY_DIR}/quicly-tracer.h)
 
 SET(UNITTEST_SOURCE_FILES
     deps/picotest/picotest.c
@@ -83,6 +82,7 @@ SET(UNITTEST_SOURCE_FILES
     t/lossy.c
     t/maxsender.c
     t/ranges.c
+    t/rate.c
     t/remote_cid.c
     t/retire_cid.c
     t/sentmap.c
@@ -113,14 +113,20 @@ IF (NOT WIN32)
     SET(QUICLY_PROBES_FILE embedded-probes.h)
 ENDIF ()
 
+ADD_CUSTOM_COMMAND(
+    OUTPUT embedded-probes.h
+    COMMAND ${PROJECT_SOURCE_DIR}/misc/probe2trace.pl -a embedded < ${PROJECT_SOURCE_DIR}/quicly-probes.d > ${CMAKE_CURRENT_BINARY_DIR}/embedded-probes.h
+    DEPENDS quicly-probes.d misc/probe2trace.pl
+    VERBATIM)
+ADD_CUSTOM_COMMAND(
+    OUTPUT quicly-tracer.h
+    COMMAND ${PROJECT_SOURCE_DIR}/misc/probe2trace.pl -a tracer < ${PROJECT_SOURCE_DIR}/quicly-probes.d > ${CMAKE_CURRENT_BINARY_DIR}/quicly-tracer.h
+    DEPENDS quicly-probes.d misc/probe2trace.pl
+    VERBATIM)
+
 ADD_LIBRARY(quicly ${QUICLY_LIBRARY_FILES} ${PICOTLS_OPENSSL_FILES} ${QUICLY_PROBES_FILE})
 TARGET_LINK_LIBRARIES(quicly LINK_PUBLIC m)
 
-ADD_CUSTOM_COMMAND(
-    OUTPUT embedded-probes.h
-    COMMAND ${CMAKE_SOURCE_DIR}/misc/probe2trace.pl -a embedded < ${CMAKE_SOURCE_DIR}/quicly-probes.d > ${CMAKE_CURRENT_BINARY_DIR}/embedded-probes.h
-    DEPENDS quicly-probes.d misc/probe2trace.pl
-    VERBATIM)
 SET(CLI_FILES ${PICOTLS_OPENSSL_FILES} ${QUICLY_LIBRARY_FILES} src/cli.c embedded-probes.h)
 SET(CLI_COMPILE_FLAGS "-DQUICLY_USE_EMBEDDED_PROBES=1")
 IF (WITH_FUSION)
@@ -133,6 +139,10 @@ TARGET_LINK_LIBRARIES(cli ${OPENSSL_LIBRARIES} ${CMAKE_DL_LIBS} m)
 
 ADD_EXECUTABLE(test.t ${PICOTLS_OPENSSL_FILES} ${UNITTEST_SOURCE_FILES})
 TARGET_LINK_LIBRARIES(test.t quicly ${OPENSSL_LIBRARIES} ${CMAKE_DL_LIBS})
+
+ADD_EXECUTABLE(simulator ${PICOTLS_OPENSSL_FILES} ${QUICLY_LIBRARY_FILES} t/simulator.c embedded-probes.h)
+SET_TARGET_PROPERTIES(simulator PROPERTIES COMPILE_FLAGS "-DQUICLY_USE_EMBEDDED_PROBES=1")
+TARGET_LINK_LIBRARIES(simulator ${OPENSSL_LIBRARIES} ${CMAKE_DL_LIBS} m)
 
 ADD_EXECUTABLE(examples-echo ${PICOTLS_OPENSSL_FILES} examples/echo.c)
 TARGET_LINK_LIBRARIES(examples-echo quicly ${OPENSSL_LIBRARIES} ${CMAKE_DL_LIBS})
