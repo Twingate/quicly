@@ -22,13 +22,9 @@
 #include "compat.h"
 #include <assert.h>
 #include <inttypes.h>
-#include <netinet/in.h>
-#include <pthread.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <sys/socket.h>
-#include <sys/time.h>
 #include "khash.h"
 #include "quicly.h"
 #include "quicly/defaults.h"
