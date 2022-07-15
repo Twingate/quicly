@@ -33,6 +33,8 @@ extern "C" {
 #include "quicly/constants.h"
 #include "quicly/ranges.h"
 
+#include "compat.h"
+
 #define QUICLY_FRAME_TYPE_PADDING 0
 #define QUICLY_FRAME_TYPE_PING 1
 #define QUICLY_FRAME_TYPE_ACK 2
