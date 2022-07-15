@@ -5689,7 +5689,7 @@ static int validate_retry_tag(quicly_decoded_packet_t *packet, quicly_cid_t *odc
 {
     int ret = 0;
     size_t pseudo_packet_len = 1 + odcid->len + packet->encrypted_off;
-    uint8_t pseudo_packet = malloc(pseudo_packet_len);
+    uint8_t *pseudo_packet = malloc(pseudo_packet_len);
 
     if (pseudo_packet) {
         pseudo_packet[0] = odcid->len;
