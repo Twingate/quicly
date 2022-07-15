@@ -5687,13 +5687,19 @@ static int handle_stateless_reset(quicly_conn_t *conn)
 
 static int validate_retry_tag(quicly_decoded_packet_t *packet, quicly_cid_t *odcid, ptls_aead_context_t *retry_aead)
 {
+    int ret = 0;
     size_t pseudo_packet_len = 1 + odcid->len + packet->encrypted_off;
-    uint8_t pseudo_packet[pseudo_packet_len];
-    pseudo_packet[0] = odcid->len;
-    memcpy(pseudo_packet + 1, odcid->cid, odcid->len);
-    memcpy(pseudo_packet + 1 + odcid->len, packet->octets.base, packet->encrypted_off);
-    return ptls_aead_decrypt(retry_aead, packet->octets.base + packet->encrypted_off, packet->octets.base + packet->encrypted_off,
-                             PTLS_AESGCM_TAG_SIZE, 0, pseudo_packet, pseudo_packet_len) == 0;
+    uint8_t pseudo_packet = malloc(pseudo_packet_len);
+
+    if (pseudo_packet) {
+        pseudo_packet[0] = odcid->len;
+        memcpy(pseudo_packet + 1, odcid->cid, odcid->len);
+        memcpy(pseudo_packet + 1 + odcid->len, packet->octets.base, packet->encrypted_off);
+        ret = (ptls_aead_decrypt(retry_aead, packet->octets.base + packet->encrypted_off, packet->octets.base + packet->encrypted_off,
+                                 PTLS_AESGCM_TAG_SIZE, 0, pseudo_packet, pseudo_packet_len) == 0);
+        free(pseudo_packet);
+    }
+    return ret;
 }
 
 int quicly_accept(quicly_conn_t **conn, quicly_context_t *ctx, struct sockaddr *dest_addr, struct sockaddr *src_addr,
