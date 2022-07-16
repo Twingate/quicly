@@ -278,7 +278,7 @@ int quicly_sentmap__type_packet(quicly_sentmap_t *map, const quicly_sent_packet_
 
 inline void quicly_sentmap_init(quicly_sentmap_t *map)
 {
-    *map = (quicly_sentmap_t){NULL};
+    memset(map, 0, sizeof(*map));
 }
 
 inline int quicly_sentmap_is_open(quicly_sentmap_t *map)
