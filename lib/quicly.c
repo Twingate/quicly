@@ -19,15 +19,12 @@
  * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
  * IN THE SOFTWARE.
  */
+#include "compat.h"
 #include <assert.h>
 #include <inttypes.h>
-#include <netinet/in.h>
-#include <pthread.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <sys/socket.h>
-#include <sys/time.h>
 #include "khash.h"
 #include "quicly.h"
 #include "quicly/defaults.h"
@@ -61,6 +58,8 @@
 #define QUICLY_TRANSPORT_PARAMETER_ID_RETRY_SOURCE_CONNECTION_ID 16
 #define QUICLY_TRANSPORT_PARAMETER_ID_MAX_DATAGRAM_FRAME_SIZE 0x20
 #define QUICLY_TRANSPORT_PARAMETER_ID_MIN_ACK_DELAY 0xff03de1a
+
+FILE *quicly_trace_fp = NULL;
 
 /**
  * maximum size of token that quicly accepts
@@ -2252,7 +2251,7 @@ static int client_collected_extensions(ptls_t *tls, ptls_handshake_properties_t 
 
     const uint8_t *src = slots[0].data.base, *end = src + slots[0].data.len;
     quicly_transport_parameters_t params;
-    quicly_cid_t original_dcid, initial_scid, retry_scid = {};
+    quicly_cid_t original_dcid, initial_scid, retry_scid = {0};
 
     /* obtain pointer to initial CID of the peer. It is guaranteed to exist in the first slot, as TP is received before any frame
      * that updates the CID set. */
@@ -4878,7 +4877,7 @@ Exit:
 size_t quicly_send_close_invalid_token(quicly_context_t *ctx, uint32_t protocol_version, ptls_iovec_t dest_cid,
                                        ptls_iovec_t src_cid, const char *err_desc, void *datagram)
 {
-    struct st_quicly_cipher_context_t egress = {};
+    struct st_quicly_cipher_context_t egress = {0};
     const struct st_ptls_salt_t *salt;
 
     /* setup keys */
@@ -6009,13 +6008,19 @@ static int handle_stateless_reset(quicly_conn_t *conn)
 
 static int validate_retry_tag(quicly_decoded_packet_t *packet, quicly_cid_t *odcid, ptls_aead_context_t *retry_aead)
 {
+    int ret = 0;
     size_t pseudo_packet_len = 1 + odcid->len + packet->encrypted_off;
-    uint8_t pseudo_packet[pseudo_packet_len];
-    pseudo_packet[0] = odcid->len;
-    memcpy(pseudo_packet + 1, odcid->cid, odcid->len);
-    memcpy(pseudo_packet + 1 + odcid->len, packet->octets.base, packet->encrypted_off);
-    return ptls_aead_decrypt(retry_aead, packet->octets.base + packet->encrypted_off, packet->octets.base + packet->encrypted_off,
-                             PTLS_AESGCM_TAG_SIZE, 0, pseudo_packet, pseudo_packet_len) == 0;
+    uint8_t *pseudo_packet = malloc(pseudo_packet_len);
+
+    if (pseudo_packet) {
+        pseudo_packet[0] = odcid->len;
+        memcpy(pseudo_packet + 1, odcid->cid, odcid->len);
+        memcpy(pseudo_packet + 1 + odcid->len, packet->octets.base, packet->encrypted_off);
+        ret = (ptls_aead_decrypt(retry_aead, packet->octets.base + packet->encrypted_off, packet->octets.base + packet->encrypted_off,
+                                 PTLS_AESGCM_TAG_SIZE, 0, pseudo_packet, pseudo_packet_len) == 0);
+        free(pseudo_packet);
+    }
+    return ret;
 }
 
 int quicly_accept(quicly_conn_t **conn, quicly_context_t *ctx, struct sockaddr *dest_addr, struct sockaddr *src_addr,
@@ -6026,7 +6031,7 @@ int quicly_accept(quicly_conn_t **conn, quicly_context_t *ctx, struct sockaddr *
     struct {
         struct st_quicly_cipher_context_t ingress, egress;
         int alive;
-    } cipher = {};
+    } cipher = {0};
     ptls_iovec_t payload;
     uint64_t next_expected_pn, pn, offending_frame_type = QUICLY_FRAME_TYPE_PADDING;
     int is_ack_only, ret;
@@ -6163,7 +6168,7 @@ int quicly_receive(quicly_conn_t *conn, struct sockaddr *dest_addr, struct socka
     case QUICLY_STATE_CLOSING:
         ++conn->egress.connection_close.num_packets_received;
         /* respond with a CONNECTION_CLOSE frame using exponential back-off */
-        if (__builtin_popcountl(conn->egress.connection_close.num_packets_received) == 1)
+        if (popcountl(conn->egress.connection_close.num_packets_received) == 1)
             conn->egress.send_ack_at = 0;
         ret = 0;
         goto Exit;
@@ -6698,7 +6703,7 @@ int quicly_decrypt_address_token(ptls_aead_context_t *aead, quicly_address_token
     if ((ret = ptls_decode64(&plaintext->issued_at, &src, end)) != 0)
         goto Exit;
     {
-        in_port_t *portaddr;
+        uint16_t *portaddr;
         ptls_decode_open_block(src, end, 1, {
             switch (end - src) {
             case 4: /* ipv4 */
