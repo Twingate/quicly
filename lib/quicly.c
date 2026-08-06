@@ -6240,6 +6240,14 @@ static quicly_error_t handle_reset_stream_frame(quicly_conn_t *conn, struct st_q
         if ((ret = quicly_recvstate_reset(&stream->recvstate, frame.final_size, &bytes_missing)) != 0)
             return ret;
         stream->conn->ingress.max_data.bytes_consumed += bytes_missing;
+        /* Reclaim connection-level receive-window credit for the bytes the application never
+         * consumed (the advertised window is bytes_shifted + max_data); otherwise every stream
+         * reset that abandons in-flight data permanently shrinks the window. */
+        if (frame.final_size > stream->recvstate.data_off) {
+            stream->conn->ingress.max_data.bytes_shifted += frame.final_size - stream->recvstate.data_off;
+            if (should_send_max_data(stream->conn))
+                stream->conn->egress.pending_flows |= QUICLY_PENDING_FLOW_OTHERS_BIT;
+        }
         quicly_error_t err = QUICLY_ERROR_FROM_APPLICATION_ERROR_CODE(frame.app_error_code);
         QUICLY_PROBE(STREAM_ON_RECEIVE_RESET, stream->conn, stream->conn->stash.now, stream, err);
         QUICLY_LOG_CONN(stream_on_receive_reset, stream->conn, {
