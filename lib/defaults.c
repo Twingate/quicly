@@ -68,6 +68,7 @@ const quicly_context_t quicly_spec_context = {
             .pacing = 0, /* off by default */
             .respect_app_limited = 255,
         },
+    .undo_spurious_loss = 1,
     .stream_scheduler = &quicly_default_stream_scheduler,
     .now = &quicly_default_now,
     .crypto_engine = &quicly_default_crypto_engine,
@@ -107,6 +108,7 @@ const quicly_context_t quicly_performant_context = {
             .pacing = 0, /* off by default */
             .respect_app_limited = 255,
         },
+    .undo_spurious_loss = 1,
     .stream_scheduler = &quicly_default_stream_scheduler,
     .now = &quicly_default_now,
     .crypto_engine = &quicly_default_crypto_engine,

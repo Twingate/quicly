@@ -383,6 +383,10 @@ struct st_quicly_context_t {
      */
     unsigned expand_client_hello : 1;
     /**
+     * whether the CC may undo a recovery episode when every packet it deemed lost is later acknowledged
+     */
+    unsigned undo_spurious_loss : 1;
+    /**
      *
      */
     quicly_cid_encryptor_t *cid_encryptor;
