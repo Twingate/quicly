@@ -1391,6 +1391,21 @@ static void destroy_stream(quicly_stream_t *stream, quicly_error_t err)
     if (stream->callbacks != NULL)
         stream->callbacks->on_destroy(stream, err);
 
+    /* Settle connection-level flow control. Every byte received on this stream was charged to `bytes_consumed`, but
+     * `bytes_shifted` - which is what the advertised MAX_DATA is derived from - only advanced for the bytes the application
+     * shifted out. Credit the remainder now that the receive buffer has been released */
+    if (stream->stream_id >= 0) {
+        /* bytes_charged is the total number of bytes this stream ever charged against
+           the connection's receive-window budget. */
+        uint64_t bytes_charged = quicly_recvstate_transfer_complete(&stream->recvstate)
+                                     ? stream->recvstate.eos
+                                     : stream->recvstate.received.ranges[stream->recvstate.received.num_ranges - 1].end;
+        assert(stream->recvstate.data_off <= bytes_charged);
+        conn->ingress.max_data.bytes_shifted += bytes_charged - stream->recvstate.data_off;
+        if (should_send_max_data(conn))
+            conn->egress.pending_flows |= QUICLY_PENDING_FLOW_OTHERS_BIT;
+    }
+
     khiter_t iter = kh_get(quicly_stream_t, conn->streams, stream->stream_id);
     assert(iter != kh_end(conn->streams));
     kh_del(quicly_stream_t, conn->streams, iter);
@@ -6240,14 +6255,6 @@ static quicly_error_t handle_reset_stream_frame(quicly_conn_t *conn, struct st_q
         if ((ret = quicly_recvstate_reset(&stream->recvstate, frame.final_size, &bytes_missing)) != 0)
             return ret;
         stream->conn->ingress.max_data.bytes_consumed += bytes_missing;
-        /* Reclaim connection-level receive-window credit for the bytes the application never
-         * consumed (the advertised window is bytes_shifted + max_data); otherwise every stream
-         * reset that abandons in-flight data permanently shrinks the window. */
-        if (frame.final_size > stream->recvstate.data_off) {
-            stream->conn->ingress.max_data.bytes_shifted += frame.final_size - stream->recvstate.data_off;
-            if (should_send_max_data(stream->conn))
-                stream->conn->egress.pending_flows |= QUICLY_PENDING_FLOW_OTHERS_BIT;
-        }
         quicly_error_t err = QUICLY_ERROR_FROM_APPLICATION_ERROR_CODE(frame.app_error_code);
         QUICLY_PROBE(STREAM_ON_RECEIVE_RESET, stream->conn, stream->conn->stash.now, stream, err);
         QUICLY_LOG_CONN(stream_on_receive_reset, stream->conn, {
