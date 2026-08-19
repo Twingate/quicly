@@ -459,6 +459,96 @@ static void test_reset_during_loss(void)
     quic_ctx.transport_params.max_stream_data = max_stream_data_orig;
 }
 
+/**
+ * Returns the amount of connection-level receive-window credit that the peer has spent but that has not been credited back
+ * yet, i.e. `bytes_consumed - bytes_shifted`. The advertised MAX_DATA is derived from `bytes_shifted`, so any part of this
+ * gap that outlives the stream it belongs to is a permanent loss of receive window.
+ */
+static uint64_t unreclaimed_window(quicly_conn_t *conn)
+{
+    uint64_t consumed, shifted;
+
+    quicly_get_max_data(conn, NULL, NULL, &consumed, &shifted);
+    assert(shifted <= consumed);
+    return consumed - shifted;
+}
+
+static void test_reset_reclaims_window(void)
+{
+    quicly_stream_t *client_stream, *server_stream;
+    test_streambuf_t *server_streambuf;
+    uint64_t baseline;
+    quicly_error_t ret;
+
+    baseline = unreclaimed_window(server);
+
+    /* client sends 11 bytes, of which the server's application reads only the first 5 */
+    ret = quicly_open_stream(client, &client_stream, 0);
+    ok(ret == 0);
+    quicly_streambuf_egress_write(client_stream, "hello world", 11);
+    transmit(client, server);
+    server_stream = quicly_get_stream(server, client_stream->stream_id);
+    ok(server_stream != NULL);
+    server_streambuf = server_stream->data;
+    ok(buffer_is(&server_streambuf->super.ingress, "hello world"));
+    quicly_streambuf_ingress_shift(server_stream, 5);
+    ok(unreclaimed_window(server) == baseline + 6);
+
+    /* the client resets, abandoning the 6 bytes that are still buffered; the credit must not be handed out yet, as the stream -
+     * and hence its receive buffer - is still alive (our send side has not finished) */
+    quicly_reset_stream(client_stream, QUICLY_ERROR_FROM_APPLICATION_ERROR_CODE(1234567));
+    transmit(client, server);
+    ok(quicly_recvstate_transfer_complete(&server_stream->recvstate));
+    ok(server_streambuf->error_received.reset_stream == QUICLY_ERROR_FROM_APPLICATION_ERROR_CODE(1234567));
+    ok(!server_streambuf->is_detached);
+    ok(unreclaimed_window(server) == baseline + 6);
+
+    /* the application is free to drain what remains buffered after the reset; those bytes must be credited exactly once */
+    quicly_streambuf_ingress_shift(server_stream, 3);
+    ok(unreclaimed_window(server) == baseline + 3);
+
+    /* once the stream goes away, the 3 bytes that were never read are credited too, and the window fully recovers */
+    quicly_streambuf_egress_shutdown(server_stream);
+    quic_now += QUICLY_DELAYED_ACK_TIMEOUT;
+    transmit(server, client);
+    quic_now += QUICLY_DELAYED_ACK_TIMEOUT;
+    transmit(client, server);
+    ok(server_streambuf->is_detached);
+    ok(unreclaimed_window(server) == baseline);
+}
+
+static void test_unread_fin_reclaims_window(void)
+{
+    quicly_stream_t *client_stream, *server_stream;
+    test_streambuf_t *server_streambuf;
+    uint64_t baseline;
+    quicly_error_t ret;
+
+    baseline = unreclaimed_window(server);
+
+    /* client sends 11 bytes followed by a FIN; the server's application never reads them */
+    ret = quicly_open_stream(client, &client_stream, 0);
+    ok(ret == 0);
+    quicly_streambuf_egress_write(client_stream, "hello world", 11);
+    quicly_streambuf_egress_shutdown(client_stream);
+    transmit(client, server);
+    server_stream = quicly_get_stream(server, client_stream->stream_id);
+    ok(server_stream != NULL);
+    server_streambuf = server_stream->data;
+    ok(quicly_recvstate_transfer_complete(&server_stream->recvstate));
+    ok(buffer_is(&server_streambuf->super.ingress, "hello world"));
+    ok(unreclaimed_window(server) == baseline + 11);
+
+    /* the server abandons the stream without reading anything; the window must still recover */
+    quicly_streambuf_egress_shutdown(server_stream);
+    quic_now += QUICLY_DELAYED_ACK_TIMEOUT;
+    transmit(server, client);
+    quic_now += QUICLY_DELAYED_ACK_TIMEOUT;
+    transmit(client, server);
+    ok(server_streambuf->is_detached);
+    ok(unreclaimed_window(server) == baseline);
+}
+
 static void test_closed(quicly_closed_t *self, quicly_conn_t *conn)
 {
     uint64_t frame_type;
@@ -604,6 +694,8 @@ void test_simple(void)
     subtest("reset-after-close", test_reset_after_close);
     subtest("tiny-stream-window", tiny_stream_window);
     subtest("reset-during-loss", test_reset_during_loss);
+    subtest("reset-reclaims-window", test_reset_reclaims_window);
+    subtest("unread-fin-reclaims-window", test_unread_fin_reclaims_window);
     subtest("close", test_close);
     subtest("tiny-connection-window", tiny_connection_window);
 }
