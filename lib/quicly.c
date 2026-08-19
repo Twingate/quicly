@@ -1391,6 +1391,21 @@ static void destroy_stream(quicly_stream_t *stream, quicly_error_t err)
     if (stream->callbacks != NULL)
         stream->callbacks->on_destroy(stream, err);
 
+    /* Settle connection-level flow control. Every byte received on this stream was charged to `bytes_consumed`, but
+     * `bytes_shifted` - which is what the advertised MAX_DATA is derived from - only advanced for the bytes the application
+     * shifted out. Credit the remainder now that the receive buffer has been released */
+    if (stream->stream_id >= 0) {
+        /* bytes_charged is the total number of bytes this stream ever charged against
+           the connection's receive-window budget. */
+        uint64_t bytes_charged = quicly_recvstate_transfer_complete(&stream->recvstate)
+                                     ? stream->recvstate.eos
+                                     : stream->recvstate.received.ranges[stream->recvstate.received.num_ranges - 1].end;
+        assert(stream->recvstate.data_off <= bytes_charged);
+        conn->ingress.max_data.bytes_shifted += bytes_charged - stream->recvstate.data_off;
+        if (should_send_max_data(conn))
+            conn->egress.pending_flows |= QUICLY_PENDING_FLOW_OTHERS_BIT;
+    }
+
     khiter_t iter = kh_get(quicly_stream_t, conn->streams, stream->stream_id);
     assert(iter != kh_end(conn->streams));
     kh_del(quicly_stream_t, conn->streams, iter);
