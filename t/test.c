@@ -250,7 +250,12 @@ static int64_t get_now_cb(quicly_now_t *self)
     return quic_now;
 }
 
-static quicly_now_t get_now = {get_now_cb};
+static uint64_t get_now_us_cb(quicly_now_t *self)
+{
+    return (uint64_t)quic_now * 1000;
+}
+
+static quicly_now_t get_now = {get_now_cb, get_now_us_cb};
 
 void on_destroy(quicly_stream_t *stream, quicly_error_t err)
 {
@@ -1404,6 +1409,7 @@ static void test_stats_foreach_field(size_t off, size_t size)
 #define GAP(after, before) offsetof(quicly_stats_t, after), offsetof(quicly_stats_t, before)
         GAP(jumpstart.cwnd, token_sent.at),
         GAP(token_sent.rtt, rtt.minimum),
+        GAP(rtt.latest, rtt.latest_us),
         GAP(loss_thresholds.use_packet_based, loss_thresholds.time_based_percentile),
         GAP(loss_thresholds.time_based_percentile, cc.cwnd),
         GAP(cc.ssthresh, cc.cwnd_initial),

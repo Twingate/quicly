@@ -402,6 +402,11 @@ static int64_t quic_now_cb(quicly_now_t *self)
     return (int64_t)(now * 1000);
 }
 
+static uint64_t quic_now_us_cb(quicly_now_t *self)
+{
+    return (uint64_t)(now * 1000000);
+}
+
 static void stream_destroy_cb(quicly_stream_t *stream, quicly_error_t err)
 {
 }
@@ -690,7 +695,7 @@ int main(int argc, char **argv)
     quicly_amend_ptls_context(&tlsctx);
 
     quicly_stream_open_t stream_open = {stream_open_cb};
-    quicly_now_t quic_now = {quic_now_cb};
+    quicly_now_t quic_now = {quic_now_cb, quic_now_us_cb};
     quicly_context_t quicctx = quicly_spec_context;
     quicctx.now = &quic_now;
     quicctx.tls = &tlsctx;

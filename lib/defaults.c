@@ -399,7 +399,20 @@ static int64_t default_now(quicly_now_t *self)
     return now;
 }
 
-quicly_now_t quicly_default_now = {default_now};
+static uint64_t default_now_us(quicly_now_t *self)
+{
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    uint64_t tv_now = (uint64_t)tv.tv_sec * 1000000 + tv.tv_usec;
+
+    /* make sure that the time does not get rewind */
+    static __thread uint64_t now;
+    if (now < tv_now)
+        now = tv_now;
+    return now;
+}
+
+quicly_now_t quicly_default_now = {default_now, default_now_us};
 
 static int default_setup_cipher(quicly_crypto_engine_t *engine, quicly_conn_t *conn, size_t epoch, int is_enc,
                                 ptls_cipher_context_t **hp_ctx, ptls_aead_context_t **aead_ctx, ptls_aead_algorithm_t *aead,

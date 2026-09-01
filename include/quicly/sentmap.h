@@ -45,6 +45,10 @@ typedef struct st_quicly_sent_packet_t {
      */
     int64_t sent_at;
     /**
+     * time of sending in microseconds; parallel to `sent_at`, used for obtaining sub-millisecond RTT samples
+     */
+    uint64_t sent_at_us;
+    /**
      * epoch to be acked in
      */
     uint8_t ack_epoch;
@@ -257,7 +261,8 @@ static int quicly_sentmap_is_open(quicly_sentmap_t *map);
 /**
  * prepares a write
  */
-quicly_error_t quicly_sentmap_prepare(quicly_sentmap_t *map, uint64_t packet_number, int64_t now, uint8_t ack_epoch);
+quicly_error_t quicly_sentmap_prepare(quicly_sentmap_t *map, uint64_t packet_number, int64_t now, uint64_t now_us,
+                                     uint8_t ack_epoch);
 /**
  * commits a write
  */

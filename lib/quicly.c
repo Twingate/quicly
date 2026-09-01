@@ -519,6 +519,10 @@ struct st_quicly_conn_t {
          */
         int64_t now;
         /**
+         * `now` in microseconds, obtained at the same moment
+         */
+        uint64_t now_us;
+        /**
          *
          */
         uint8_t lock_count;
@@ -618,6 +622,8 @@ static void lock_now(quicly_conn_t *conn, int is_reentrant)
     if (conn->stash.now == 0) {
         assert(conn->stash.lock_count == 0);
         conn->stash.now = conn->super.ctx->now->cb(conn->super.ctx->now);
+        conn->stash.now_us = conn->super.ctx->now->cb_us != NULL ? conn->super.ctx->now->cb_us(conn->super.ctx->now)
+                                                                 : (uint64_t)conn->stash.now * 1000;
     } else {
         assert(is_reentrant && "caller must be reentrant");
         assert(conn->stash.lock_count != 0);
@@ -630,8 +636,10 @@ static void unlock_now(quicly_conn_t *conn)
 {
     assert(conn->stash.now != 0);
 
-    if (--conn->stash.lock_count == 0)
+    if (--conn->stash.lock_count == 0) {
         conn->stash.now = 0;
+        conn->stash.now_us = 0;
+    }
 }
 
 static void set_address(quicly_address_t *addr, struct sockaddr *sa)
@@ -4010,7 +4018,7 @@ static quicly_error_t commit_send_packet(quicly_conn_t *conn, quicly_send_contex
         conn->super.state < QUICLY_STATE_CLOSING) {
         quicly_error_t ret;
         if ((ret = quicly_sentmap_prepare(&conn->egress.loss.sentmap, conn->egress.packet_number, conn->stash.now,
-                                          QUICLY_EPOCH_1RTT)) != 0)
+                                          conn->stash.now_us, QUICLY_EPOCH_1RTT)) != 0)
             return ret;
         if (quicly_sentmap_allocate(&conn->egress.loss.sentmap, on_invalid_ack) == NULL)
             return PTLS_ERROR_NO_MEMORY;
@@ -4141,7 +4149,8 @@ static quicly_error_t do_allocate_frame(quicly_conn_t *conn, quicly_send_context
         uint8_t ack_epoch = get_epoch(s->current.first_byte);
         if (ack_epoch == QUICLY_EPOCH_0RTT)
             ack_epoch = QUICLY_EPOCH_1RTT;
-        if ((ret = quicly_sentmap_prepare(&conn->egress.loss.sentmap, conn->egress.packet_number, conn->stash.now, ack_epoch)) != 0)
+        if ((ret = quicly_sentmap_prepare(&conn->egress.loss.sentmap, conn->egress.packet_number, conn->stash.now,
+                                          conn->stash.now_us, ack_epoch)) != 0)
             return ret;
         /* adjust ack-frequency */
         if (frame_type == ALLOCATE_FRAME_TYPE_ACK_ELICITING && conn->stash.now >= conn->egress.ack_frequency.update_at &&
@@ -6076,7 +6085,7 @@ static quicly_error_t enter_close(quicly_conn_t *conn, int local_is_initiating, 
     /* release all inflight info, register a close timeout */
     if ((ret = discard_sentmap_by_epoch(conn, ~0u)) != 0)
         return ret;
-    if ((ret = quicly_sentmap_prepare(&conn->egress.loss.sentmap, conn->egress.packet_number, conn->stash.now,
+    if ((ret = quicly_sentmap_prepare(&conn->egress.loss.sentmap, conn->egress.packet_number, conn->stash.now, conn->stash.now_us,
                                       QUICLY_EPOCH_INITIAL)) != 0)
         return ret;
     if (quicly_sentmap_allocate(&conn->egress.loss.sentmap, on_end_closing) == NULL)
@@ -6278,7 +6287,8 @@ static quicly_error_t handle_ack_frame(quicly_conn_t *conn, struct st_quicly_han
     struct {
         uint64_t pn;
         int64_t sent_at;
-    } largest_newly_acked = {UINT64_MAX, INT64_MAX};
+        uint64_t sent_at_us;
+    } largest_newly_acked = {UINT64_MAX, INT64_MAX, UINT64_MAX};
     size_t bytes_acked = 0;
     int includes_ack_eliciting = 0, includes_late_ack = 0;
     uint64_t largest_late_acked = UINT64_MAX;
@@ -6363,6 +6373,7 @@ static quicly_error_t handle_ack_frame(quicly_conn_t *conn, struct st_quicly_han
             if (conn->egress.pn_path_start <= pn_acked) {
                 largest_newly_acked.pn = pn_acked;
                 largest_newly_acked.sent_at = sent->sent_at;
+                largest_newly_acked.sent_at_us = sent->sent_at_us;
             }
             QUICLY_PROBE(PACKET_ACKED, conn, conn->stash.now, pn_acked, is_late_ack);
             QUICLY_LOG_CONN(packet_acked, conn, {
@@ -6410,7 +6421,8 @@ static quicly_error_t handle_ack_frame(quicly_conn_t *conn, struct st_quicly_han
     /* Update loss detection engine on ack. The function uses ack_delay only when the largest_newly_acked is also the largest acked
      * so far. So, it does not matter if the ack_delay being passed in does not apply to the largest_newly_acked. */
     quicly_loss_on_ack_received(&conn->egress.loss, largest_newly_acked.pn, largest_late_acked, conn->egress.packet_number,
-                                state->epoch, conn->stash.now, largest_newly_acked.sent_at, frame.ack_delay,
+                                state->epoch, conn->stash.now, conn->stash.now_us, largest_newly_acked.sent_at,
+                                largest_newly_acked.sent_at_us, frame.ack_delay,
                                 includes_ack_eliciting ? includes_late_ack ? QUICLY_LOSS_ACK_RECEIVED_KIND_ACK_ELICITING_LATE_ACK
                                                                            : QUICLY_LOSS_ACK_RECEIVED_KIND_ACK_ELICITING
                                                        : QUICLY_LOSS_ACK_RECEIVED_KIND_NON_ACK_ELICITING);

@@ -92,13 +92,14 @@ void quicly_sentmap_dispose(quicly_sentmap_t *map)
     }
 }
 
-quicly_error_t quicly_sentmap_prepare(quicly_sentmap_t *map, uint64_t packet_number, int64_t now, uint8_t ack_epoch)
+quicly_error_t quicly_sentmap_prepare(quicly_sentmap_t *map, uint64_t packet_number, int64_t now, uint64_t now_us,
+                                     uint8_t ack_epoch)
 {
     assert(map->_pending_packet == NULL);
 
     if ((map->_pending_packet = quicly_sentmap_allocate(map, quicly_sentmap__type_packet)) == NULL)
         return PTLS_ERROR_NO_MEMORY;
-    map->_pending_packet->data.packet = (quicly_sent_packet_t){packet_number, now, ack_epoch};
+    map->_pending_packet->data.packet = (quicly_sent_packet_t){packet_number, now, now_us, ack_epoch};
     return 0;
 }
 

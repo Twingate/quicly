@@ -137,10 +137,15 @@ QUICLY_CALLBACK_TYPE(void, receive_datagram_frame, quicly_conn_t *conn, ptls_iov
  */
 QUICLY_CALLBACK_TYPE(void, closed, quicly_conn_t *conn);
 /**
- * Returns current time in milliseconds. The returned value MUST monotonically increase (i.e., it is the responsibility of the
- * callback implementation to guarantee that the returned value never goes back to the past).
+ * Returns current time. `cb` returns the time in milliseconds; the returned value MUST monotonically increase (i.e., it is the
+ * responsibility of the callback implementation to guarantee that the returned value never goes back to the past). `cb_us` is an
+ * optional sibling returning the same clock in microseconds, provided for congestion controllers that need sub-millisecond
+ * resolution (see `quicly_rtt_t::latest_us`); when NULL, the microsecond clock is derived from `cb`.
  */
-QUICLY_CALLBACK_TYPE0(int64_t, now);
+typedef struct st_quicly_now_t {
+    int64_t (*cb)(struct st_quicly_now_t *self);
+    uint64_t (*cb_us)(struct st_quicly_now_t *self);
+} quicly_now_t;
 /**
  * called when a NEW_TOKEN token is received on a connection
  */
@@ -826,6 +831,7 @@ typedef struct st_quicly_stats_t {
     apply(rtt.smoothed, "rtt.smoothed")                                                                                            \
     apply(rtt.variance, "rtt.variance")                                                                                            \
     apply(rtt.latest, "rtt.latest")                                                                                                \
+    apply(rtt.latest_us, "rtt.latest-us")                                                                                          \
     apply(loss_thresholds.use_packet_based, "loss-thresholds.use-packet-based")                                                    \
     apply(loss_thresholds.time_based_percentile, "loss-thresholds.time-based-percentile")                                          \
     apply(cc.cwnd, "cc.cwnd")                                                                                                      \

@@ -91,10 +91,16 @@ typedef struct quicly_rtt_t {
      * Value of the latest RTT sample.
      */
     uint32_t latest;
+    /**
+     * Value of the latest RTT sample in microseconds, before the 1ms floor applied to `latest` and *without* ack delay being
+     * subtracted. Congestion controllers that do their own ack-delay reasoning (e.g., BBR) consume this value; subtracting the ack
+     * delay here as well would double-correct it. Not used by the loss detector.
+     */
+    uint64_t latest_us;
 } quicly_rtt_t;
 
 static void quicly_rtt_init(quicly_rtt_t *rtt, const quicly_loss_conf_t *conf, uint32_t initial_rtt);
-static void quicly_rtt_update(quicly_rtt_t *rtt, uint32_t latest_rtt, uint32_t ack_delay);
+static void quicly_rtt_update(quicly_rtt_t *rtt, uint32_t latest_rtt, uint64_t latest_rtt_us, uint32_t ack_delay);
 static uint32_t quicly_rtt_get_pto(quicly_rtt_t *rtt, uint32_t max_ack_delay, uint32_t min_pto);
 
 typedef struct quicly_loss_thresholds_t {
@@ -184,8 +190,8 @@ static void quicly_loss_update_alarm(quicly_loss_t *r, int64_t now, int64_t last
  * called when an ACK is received
  */
 static void quicly_loss_on_ack_received(quicly_loss_t *r, uint64_t largest_newly_acked, uint64_t largest_late_acked, uint64_t next_pn,
-                                        size_t epoch, int64_t now, int64_t sent_at, uint64_t ack_delay_encoded,
-                                        quicly_loss_ack_received_kind_t kind);
+                                        size_t epoch, int64_t now, uint64_t now_us, int64_t sent_at, uint64_t sent_at_us,
+                                        uint64_t ack_delay_encoded, quicly_loss_ack_received_kind_t kind);
 /* This function updates the loss detection timer and indicates to the caller how many packets should be sent.
  * After calling this function, app should:
  *  * send min_packets_to_send number of packets immediately. min_packets_to_send should never be 0.
@@ -218,15 +224,17 @@ inline void quicly_rtt_init(quicly_rtt_t *rtt, const quicly_loss_conf_t *conf, u
     (void)conf;
     rtt->minimum = UINT32_MAX;
     rtt->latest = 0;
+    rtt->latest_us = 0;
     rtt->smoothed = initial_rtt;
     rtt->variance = initial_rtt / 2;
 }
 
-inline void quicly_rtt_update(quicly_rtt_t *rtt, uint32_t latest_rtt, uint32_t ack_delay)
+inline void quicly_rtt_update(quicly_rtt_t *rtt, uint32_t latest_rtt, uint64_t latest_rtt_us, uint32_t ack_delay)
 {
     int is_first_sample = rtt->latest == 0;
 
     assert(latest_rtt != UINT32_MAX);
+    rtt->latest_us = latest_rtt_us; /* recorded before the 1ms floor below, and never adjusted by ack delay */
     rtt->latest = latest_rtt != 0 ? latest_rtt : 1; /* Force minimum RTT sample to 1ms */
 
     /* update min_rtt */
@@ -333,8 +341,8 @@ inline void quicly_loss_update_alarm(quicly_loss_t *r, int64_t now, int64_t last
 }
 
 inline void quicly_loss_on_ack_received(quicly_loss_t *r, uint64_t largest_newly_acked, uint64_t largest_late_acked,
-                                        uint64_t next_pn, size_t epoch, int64_t now, int64_t sent_at, uint64_t ack_delay_encoded,
-                                        quicly_loss_ack_received_kind_t kind)
+                                        uint64_t next_pn, size_t epoch, int64_t now, uint64_t now_us, int64_t sent_at,
+                                        uint64_t sent_at_us, uint64_t ack_delay_encoded, quicly_loss_ack_received_kind_t kind)
 {
     /* Reset PTO count if anything is newly acked, and if sender is not speculatively probing at a tail */
     if (largest_newly_acked != UINT64_MAX && r->pto_count > 0)
@@ -370,7 +378,7 @@ inline void quicly_loss_on_ack_received(quicly_loss_t *r, uint64_t largest_newly
     /* use min(ack_delay, max_ack_delay) as the ack delay */
     if (ack_delay_millisecs > *r->max_ack_delay)
         ack_delay_millisecs = *r->max_ack_delay;
-    quicly_rtt_update(&r->rtt, (uint32_t)(now - sent_at), ack_delay_millisecs);
+    quicly_rtt_update(&r->rtt, (uint32_t)(now - sent_at), now_us > sent_at_us ? now_us - sent_at_us : 0, ack_delay_millisecs);
 
 }
 
