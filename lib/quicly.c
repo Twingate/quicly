@@ -3979,7 +3979,8 @@ static quicly_error_t commit_send_packet(quicly_conn_t *conn, quicly_send_contex
     if (quicly_sentmap_is_open(&conn->egress.loss.sentmap)) {
         int cc_limited = conn->egress.loss.sentmap.bytes_in_flight + packet_bytes_in_flight >=
                          conn->egress.cc.cwnd / 2; /* for the rationale behind this formula, see handle_ack_frame */
-        quicly_sentmap_commit(&conn->egress.loss.sentmap, (uint16_t)packet_bytes_in_flight, cc_limited, on_promoted_path);
+        quicly_sentmap_commit(&conn->egress.loss.sentmap, (uint16_t)packet_bytes_in_flight, cc_limited, on_promoted_path,
+                              conn->super.stats.num_bytes.ack_received, conn->super.stats.num_bytes.lost);
     }
 
     if (packet_bytes_in_flight != 0) {
@@ -4022,7 +4023,8 @@ static quicly_error_t commit_send_packet(quicly_conn_t *conn, quicly_send_contex
             return ret;
         if (quicly_sentmap_allocate(&conn->egress.loss.sentmap, on_invalid_ack) == NULL)
             return PTLS_ERROR_NO_MEMORY;
-        quicly_sentmap_commit(&conn->egress.loss.sentmap, 0, 0, 0);
+        quicly_sentmap_commit(&conn->egress.loss.sentmap, 0, 0, 0, conn->super.stats.num_bytes.ack_received,
+                              conn->super.stats.num_bytes.lost);
         ++conn->egress.packet_number;
         conn->egress.next_pn_to_skip = calc_next_pn_to_skip(conn->super.ctx->tls, conn->egress.packet_number, conn->egress.cc.cwnd,
                                                             conn->egress.max_udp_payload_size);
@@ -6090,7 +6092,8 @@ static quicly_error_t enter_close(quicly_conn_t *conn, int local_is_initiating, 
         return ret;
     if (quicly_sentmap_allocate(&conn->egress.loss.sentmap, on_end_closing) == NULL)
         return PTLS_ERROR_NO_MEMORY;
-    quicly_sentmap_commit(&conn->egress.loss.sentmap, 0, 0, 0);
+    quicly_sentmap_commit(&conn->egress.loss.sentmap, 0, 0, 0, conn->super.stats.num_bytes.ack_received,
+                          conn->super.stats.num_bytes.lost);
     ++conn->egress.packet_number;
 
     if (local_is_initiating) {

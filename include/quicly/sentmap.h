@@ -49,6 +49,20 @@ typedef struct st_quicly_sent_packet_t {
      */
     uint64_t sent_at_us;
     /**
+     * Snapshot of `quicly_stats_t::num_bytes.ack_received` (i.e., total bytes delivered) taken when the packet was sent. The delta
+     * against the current value tells how much was delivered while the packet was in flight.
+     */
+    uint64_t delivered_prior;
+    /**
+     * Snapshot of `quicly_stats_t::num_bytes.lost` taken when the packet was sent.
+     */
+    uint64_t lost_prior;
+    /**
+     * Snapshot of `quicly_sentmap_t::bytes_in_flight` taken when the packet was sent, *excluding* the packet itself; zero
+     * therefore means the packet was sent while the connection was idle.
+     */
+    uint64_t inflight_prior;
+    /**
      * epoch to be acked in
      */
     uint8_t ack_epoch;
@@ -111,8 +125,9 @@ struct st_quicly_sent_ack_additional_t {
 
 /**
  * Describes what is inside a packet or frame being sent. Within the sentmap, each packet-level entry (identified by .acked ==
- * quicly_sentmap__type_packet) is followed by a number of frame-level entries. Size of `quicly_sent_t` is kept as 256 bits (64-bit
- * * 4).
+ * quicly_sentmap__type_packet) is followed by a number of frame-level entries. The size of `quicly_sent_t` used to be kept at 256
+ * bits (64-bit * 4); the packet-level entry now exceeds that, as it carries the send-time snapshots that rate-based congestion
+ * controllers need. The other variants are unaffected, and nothing enforces the bound.
  */
 struct st_quicly_sent_t {
     quicly_sent_acked_cb acked;
@@ -266,7 +281,8 @@ quicly_error_t quicly_sentmap_prepare(quicly_sentmap_t *map, uint64_t packet_num
 /**
  * commits a write
  */
-static void quicly_sentmap_commit(quicly_sentmap_t *map, uint16_t bytes_in_flight, int cc_limited, int promoted_path);
+static void quicly_sentmap_commit(quicly_sentmap_t *map, uint16_t bytes_in_flight, int cc_limited, int promoted_path,
+                                  uint64_t delivered_prior, uint64_t lost_prior);
 /**
  * Allocates a slot to contain a callback for a frame.  The function MUST be called after _prepare but before _commit.
  */
@@ -305,9 +321,15 @@ inline int quicly_sentmap_is_open(quicly_sentmap_t *map)
     return map->_pending_packet != NULL;
 }
 
-inline void quicly_sentmap_commit(quicly_sentmap_t *map, uint16_t bytes_in_flight, int cc_limited, int promoted_path)
+inline void quicly_sentmap_commit(quicly_sentmap_t *map, uint16_t bytes_in_flight, int cc_limited, int promoted_path,
+                                  uint64_t delivered_prior, uint64_t lost_prior)
 {
     assert(quicly_sentmap_is_open(map));
+
+    /* record the delivery state as of the moment of sending; `inflight_prior` excludes the packet being committed */
+    map->_pending_packet->data.packet.delivered_prior = delivered_prior;
+    map->_pending_packet->data.packet.lost_prior = lost_prior;
+    map->_pending_packet->data.packet.inflight_prior = map->bytes_in_flight;
 
     if (bytes_in_flight != 0) {
         map->_pending_packet->data.packet.ack_eliciting = 1;
