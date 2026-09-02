@@ -55,6 +55,7 @@ void test_maxsender(void);
 void test_pacer(void);
 void test_sentmap(void);
 void test_loss(void);
+void test_cc_bbr(void);
 void test_simple(void);
 void test_lossy(void);
 void test_stream_concurrency(void);

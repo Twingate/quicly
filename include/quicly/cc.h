@@ -36,6 +36,7 @@ extern "C" {
 #include "quicly/constants.h"
 #include "quicly/pacer.h"
 #include "quicly/loss.h"
+#include "quicly/cc-bbr.h"
 
 #define QUICLY_MIN_CWND 2
 #define QUICLY_RENO_BETA 0.7
@@ -174,6 +175,69 @@ typedef struct st_quicly_cc_t {
                 int64_t avoidance_start;
             } undo;
         } cubic;
+        /**
+         * State information for BBR. The state machine itself lives in picoquic's `bbr.c` behind `path`; what is held here is the
+         * handle to it plus the telemetry that makes it observable. Valid only while `type` is the BBR type - the fields below
+         * alias cubic's on any other controller, so consumers of `quicly_stats_t` must check `cc.type` before reading them.
+         */
+        struct {
+            /**
+             * the `picoquic_path_t` BBR hangs its state off. Opaque here; only `lib/cc-bbr.c` may dereference it.
+             */
+            void *path;
+            /**
+             * CSV ring buffer, or NULL when telemetry is switched off
+             */
+            struct st_quicly_cc_bbr_telemetry_t *telemetry;
+            /**
+             * previous `picoquic_bbr_observe()` word, and whether one has been seen yet, for detecting edges
+             */
+            uint64_t prev_cc_state;
+            uint8_t prev_cc_state_valid;
+            /**
+             * Number of times each BBR state was entered. The single most useful liveness signal: an entry count that stays at
+             * `{startup: 1}` means BBR never advanced (BBR_POC_PLAN.md §10).
+             */
+            uint32_t num_state_entries[QUICLY_CC_BBR_NUM_STATES];
+            /**
+             * Number of notifications forwarded, by type. If `[QUICLY_CC_BBR_NOTIFY_ACK]` lags far behind
+             * `num_packets.ack_received`, the ACK gate was not relaxed (BBR_POC_PLAN.md §9).
+             */
+            uint32_t num_notify[QUICLY_CC_BBR_NUM_NOTIFICATIONS];
+            /**
+             * Number of times BBR's ack phase changed. Stands in for the round counter, which is not observable.
+             */
+            uint32_t num_ack_phase_changes;
+            /**
+             * ACKs forwarded to BBR, and how many of those carried `is_app_limited`. The ratio says whether the bandwidth estimate
+             * is being inflated by app-limited samples.
+             */
+            uint32_t num_acks;
+            uint32_t num_acks_app_limited;
+            /**
+             * Number of times BBR entered PTO recovery.
+             */
+            uint32_t num_pto_recovery;
+            /**
+             * Number of `restart_from_idle` notifications.
+             */
+            uint32_t num_idle_restarts;
+            /**
+             * BBR's bandwidth estimate, latest and maximum, in bytes/sec. Worth comparing against `delivery_rate`, which quicly's
+             * own ratemeter derives independently.
+             */
+            uint64_t bw_latest;
+            uint64_t bw_maximum;
+            /**
+             * pacing rate BBR asked for, latest and maximum, in bytes/sec
+             */
+            uint64_t pacing_rate_latest;
+            uint64_t pacing_rate_maximum;
+            /**
+             * most recent send quantum
+             */
+            uint64_t send_quantum;
+        } bbr;
     } state;
     /**
      * jumpstart state

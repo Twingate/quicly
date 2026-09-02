@@ -1507,6 +1507,7 @@ int main(int argc, char **argv)
     subtest("pacer", test_pacer);
     subtest("sentmap", test_sentmap);
     subtest("loss", test_loss);
+    subtest("cc-bbr", test_cc_bbr);
     subtest("adjust-stream-frame-layout", test_adjust_stream_frame_layout);
     subtest("test-vector", test_vector);
     subtest("test-retry-aead", test_retry_aead);

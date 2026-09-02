@@ -60,6 +60,7 @@ SET(PICOTLS_OPENSSL_FILES
 
 SET(QUICLY_LIBRARY_FILES
     lib/frame.c
+    lib/cc-bbr-telemetry.c
     lib/cc-reno.c
     lib/cc-cubic.c
     lib/cc-pico.c
@@ -79,6 +80,7 @@ SET(QUICLY_LIBRARY_FILES
 SET(UNITTEST_SOURCE_FILES
     deps/picotest/picotest.c
     t/cc.c
+    t/cc-bbr.c
     t/frame.c
     t/jumpstart.c
     t/local_cid.c
