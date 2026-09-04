@@ -169,9 +169,29 @@ void quicly_cc_bbr_counters_init(struct st_quicly_cc_t *cc);
 void quicly_cc_bbr_counters_update(struct st_quicly_cc_t *cc, quicly_cc_bbr_notification_t notification, uint64_t cc_state,
                                    uint64_t bw, int is_app_limited, int64_t now);
 /**
- * Records the pacing rate BBR handed back. Call from the `picoquic_update_pacing_rate()` implementation (BBR_POC_PLAN.md §2.6).
+ * Converts a pacing rate as BBR reports it - bytes per second, as a `double` - into the bytes per millisecond that
+ * `quicly_cc_t::pacer_rate` is expressed in. Assign the result there from the `picoquic_update_pacing_rate()` implementation
+ * (BBR_POC_PLAN.md §2.6); that is the only path by which BBR's rate output reaches quicly, so leaving that function empty silently
+ * reverts pacing to the cwnd/SRTT formula.
+ *
+ * The rounding rules are the reason this is not written out at the call site: zero means "no rate supplied", so a rate below the
+ * representable floor clamps to 1 rather than rounding down to 0 (which would hand pacing back to the cwnd/SRTT formula), and an
+ * implausible one saturates rather than wrapping. Both mistakes fail silently.
  */
-void quicly_cc_bbr_counters_update_pacing(struct st_quicly_cc_t *cc, uint64_t pacing_rate, uint64_t send_quantum);
+static uint32_t quicly_cc_bbr_calc_pacer_rate(double bytes_per_sec);
+
+/* inline definitions */
+
+inline uint32_t quicly_cc_bbr_calc_pacer_rate(double bytes_per_sec)
+{
+    if (!(bytes_per_sec > 0))
+        return 0;
+
+    double per_msec = bytes_per_sec / 1000;
+    if (per_msec >= UINT32_MAX)
+        return UINT32_MAX;
+    return per_msec < 1 ? 1 : (uint32_t)per_msec;
+}
 
 #ifdef __cplusplus
 }

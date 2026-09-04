@@ -86,6 +86,13 @@ typedef struct st_quicly_cc_t {
      */
     uint32_t ssthresh;
     /**
+     * Sending rate the congestion controller wants the pacer to use, in bytes per millisecond, or zero if it has none to offer.
+     * Window-based controllers leave this at zero and the pacer keeps deriving its rate from `cwnd` and SRTT; rate-based ones
+     * (i.e., BBR) compute a rate directly and publish it here. Note that zero is reserved for "no rate", so a controller
+     * supplying a genuinely tiny rate must clamp to 1 rather than round down to 0.
+     */
+    uint32_t pacer_rate;
+    /**
      * Packet number indicating end of recovery period, if in recovery.
      */
     uint64_t recovery_end;
@@ -93,6 +100,20 @@ typedef struct st_quicly_cc_t {
      * If the most recent loss episode was signalled by ECN only (i.e., no packet loss).
      */
     unsigned episode_by_ecn : 1;
+    /**
+     * Test-only: when set, `calc_send_window()` stops enforcing `cwnd - inflight`. The congestion controller keeps running
+     * unmodified - `cwnd` keeps reflecting whatever it computes, and real loss still updates it exactly as it would otherwise -
+     * but nothing gates sending on that value; only the pacer and anti-amplification still apply. See
+     * `quicly_set_cwnd_bypass()`.
+     *
+     * This exists to let a window-based controller's `cwnd` be observed as a diagnostic while sending is driven purely by
+     * `pacer_rate`, so real loss at a fixed rate can be evaluated without the controller's own AIMD response masking the result
+     * behind a collapsed window. It previews what a rate-based controller (e.g., BBR, which enforces its own, much less punitive
+     * inflight bound rather than `cwnd`) would let through - but it is not a substitute for one: with this set, nothing at all
+     * bounds inflight data beyond the pacer's token bucket, which a real controller would never allow. Never set this outside of
+     * controlled experiments.
+     */
+    unsigned cwnd_bypass : 1;
     /**
      * State information specific to the congestion controller implementation.
      */
@@ -228,11 +249,6 @@ typedef struct st_quicly_cc_t {
              */
             uint64_t bw_latest;
             uint64_t bw_maximum;
-            /**
-             * pacing rate BBR asked for, latest and maximum, in bytes/sec
-             */
-            uint64_t pacing_rate_latest;
-            uint64_t pacing_rate_maximum;
             /**
              * most recent send quantum
              */

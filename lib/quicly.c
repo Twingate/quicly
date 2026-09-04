@@ -3642,6 +3642,10 @@ static uint32_t calc_pacer_send_rate(quicly_conn_t *conn)
 {
     uint32_t multiplier;
 
+    /* A rate-based controller (i.e., BBR) computes its own sending rate; the multiplier logic below does not apply to it. */
+    if (conn->egress.cc.pacer_rate != 0)
+        return conn->egress.cc.pacer_rate;
+
     if (conn->egress.cc.num_loss_episodes == 0) {
         if (quicly_cc_in_jumpstart(&conn->egress.cc)) {
             multiplier = 1;
@@ -3695,6 +3699,12 @@ static size_t calc_send_window(quicly_conn_t *conn, size_t min_bytes_to_send, ui
     if (restrict_sending) {
         /* Send min_bytes_to_send on PTO */
         window = min_bytes_to_send;
+    } else if (conn->egress.cc.cwnd_bypass) {
+        /* Test-only: the congestion controller keeps running (cwnd keeps reflecting whatever it thinks the window should be, and
+         * real loss still updates it), but nothing here enforces that cap. Only the pacer and anti-amplification still gate
+         * sending. See quicly_set_cwnd_bypass(). */
+        window = pacer_window;
+        window = window > min_bytes_to_send ? window : min_bytes_to_send;
     } else {
         /* Limit to cwnd */
         if (conn->egress.cc.cwnd > conn->egress.loss.sentmap.bytes_in_flight) {
@@ -5847,6 +5857,28 @@ void quicly_send_datagram_frames(quicly_conn_t *conn, ptls_iovec_t *datagrams, s
 int quicly_set_cc(quicly_conn_t *conn, quicly_cc_type_t *cc)
 {
     return cc->cc_switch(&conn->egress.cc);
+}
+
+int quicly_set_pacer_rate(quicly_conn_t *conn, uint32_t bytes_per_msec)
+{
+    conn->egress.cc.pacer_rate = bytes_per_msec;
+    return conn->egress.pacer != NULL;
+}
+
+int quicly_set_cwnd(quicly_conn_t *conn, uint32_t cwnd)
+{
+    if (cwnd == 0)
+        cwnd = quicly_cc_calc_initial_cwnd(conn->super.ctx->initcwnd_packets, conn->egress.max_udp_payload_size);
+    conn->egress.cc.cwnd = cwnd;
+    if (conn->egress.cc.cwnd_maximum < cwnd)
+        conn->egress.cc.cwnd_maximum = cwnd;
+    return 1;
+}
+
+int quicly_set_cwnd_bypass(quicly_conn_t *conn, int enabled)
+{
+    conn->egress.cc.cwnd_bypass = enabled != 0;
+    return 1;
 }
 
 static quicly_error_t do_send_closed(quicly_conn_t *conn, quicly_send_context_t *s)

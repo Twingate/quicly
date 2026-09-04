@@ -1114,6 +1114,116 @@ static void test_nondecryptable_initial(void)
 #undef LEN_LOW
 }
 
+static void test_set_pacer_rate(void)
+{
+    quicly_conn_t *conn;
+    quicly_error_t ret;
+
+    ret = quicly_connect(&conn, &quic_ctx, "example.com", &fake_address.sa, NULL, new_master_id(), ptls_iovec_init(NULL, 0), NULL,
+                         NULL, NULL);
+    ok(ret == 0);
+
+    quicly_stats_t stats;
+
+    /* no override to begin with, so the pacer derives its own rate */
+    ok(quicly_get_stats(conn, &stats) == 0);
+    ok(stats.cc.pacer_rate == 0);
+
+    /* The override is visible through the stats. The return value reports whether the connection has a pacer to consume it, which
+     * is false here because `enable_ratio.pacing` is off by default (`lib/defaults.c`) - i.e., setting a rate on a connection
+     * without pacing enabled is recorded but inert. */
+    ok(!quicly_set_pacer_rate(conn, 1500));
+    ok(quicly_get_stats(conn, &stats) == 0);
+    ok(stats.cc.pacer_rate == 1500);
+
+    /* zero clears it */
+    quicly_set_pacer_rate(conn, 0);
+    ok(quicly_get_stats(conn, &stats) == 0);
+    ok(stats.cc.pacer_rate == 0);
+
+    quicly_free(conn);
+}
+
+static void test_set_cwnd(void)
+{
+    quicly_conn_t *conn;
+    quicly_error_t ret;
+
+    ret = quicly_connect(&conn, &quic_ctx, "example.com", &fake_address.sa, NULL, new_master_id(), ptls_iovec_init(NULL, 0), NULL,
+                         NULL, NULL);
+    ok(ret == 0);
+
+    quicly_stats_t stats;
+
+    ok(quicly_get_stats(conn, &stats) == 0);
+    ok(stats.cc.cwnd != 0 && stats.cc.cwnd != UINT32_MAX);
+
+    /* pinning to the max removes cwnd as a constraint, leaving the pacer (or lack thereof) as the only gate */
+    ok(quicly_set_cwnd(conn, UINT32_MAX));
+    ok(quicly_get_stats(conn, &stats) == 0);
+    ok(stats.cc.cwnd == UINT32_MAX);
+    ok(stats.cc.cwnd_maximum == UINT32_MAX); /* the high-water mark tracks an explicit override too */
+
+    /* Zero restores the initial congestion window - but not to the value observed right after quicly_connect(): that one is
+     * computed from `ctx->transport_params.max_udp_payload_size` (quicly.c:2989), whereas the restore (like quicly.c:2136 and
+     * :5865) uses `conn->egress.max_udp_payload_size`, the conservative initial-epoch MTU. Both are "the initial cwnd"; they
+     * just draw from different MTU sources by design, so recompute the same way the restore does rather than comparing to the
+     * pre-override value. */
+    ok(quicly_set_cwnd(conn, 0));
+    ok(quicly_get_stats(conn, &stats) == 0);
+    ok(stats.cc.cwnd ==
+       quicly_cc_calc_initial_cwnd(quic_ctx.initcwnd_packets, quic_ctx.initial_egress_max_udp_payload_size));
+
+    quicly_free(conn);
+}
+
+static void test_cwnd_bypass(void)
+{
+    quicly_conn_t *conn;
+    quicly_error_t ret;
+
+    ret = quicly_connect(&conn, &quic_ctx, "example.com", &fake_address.sa, NULL, new_master_id(), ptls_iovec_init(NULL, 0), NULL,
+                         NULL, NULL);
+    ok(ret == 0);
+
+    /* off by default */
+    quicly_stats_t stats;
+    ok(quicly_get_stats(conn, &stats) == 0);
+    ok(!stats.cc.cwnd_bypass);
+
+    /* white-box: drive calc_send_window() directly with contrived cwnd/inflight, rather than pushing real packets through */
+    conn->egress.cc.cwnd = 1000;
+    conn->egress.loss.sentmap.bytes_in_flight = 200;
+
+    /* baseline (bypass off): window is min(cwnd - inflight, pacer_window) */
+    ok(calc_send_window(conn, 0, UINT64_MAX, 5000, 0) == 800);
+
+    /* bypass on: cwnd/inflight no longer factor in at all - only the pacer window does, even though cwnd - inflight (800) is
+     * smaller than what the pacer would allow (5000) */
+    ok(quicly_set_cwnd_bypass(conn, 1));
+    ok(quicly_get_stats(conn, &stats) == 0);
+    ok(stats.cc.cwnd_bypass);
+    ok(calc_send_window(conn, 0, UINT64_MAX, 5000, 0) == 5000);
+
+    /* cwnd itself is untouched and fully observable - only enforcement is gone, not the controller's own value */
+    ok(stats.cc.cwnd == 1000);
+
+    /* the PTO minimum still comes through even with an exhausted pacer window */
+    ok(calc_send_window(conn, 300, UINT64_MAX, 0, 0) == 300);
+
+    /* restrict_sending (an actual PTO) still wins outright, same as without bypass */
+    ok(calc_send_window(conn, 300, UINT64_MAX, 5000, 1) == 300);
+
+    /* anti-amplification is never bypassed */
+    ok(calc_send_window(conn, 0, 1200, 5000, 0) == 1200);
+
+    /* turning it back off restores normal cwnd enforcement */
+    ok(quicly_set_cwnd_bypass(conn, 0));
+    ok(calc_send_window(conn, 0, UINT64_MAX, 5000, 0) == 800);
+
+    quicly_free(conn);
+}
+
 static void test_set_cc(void)
 {
     quicly_conn_t *conn;
@@ -1518,6 +1628,9 @@ int main(int argc, char **argv)
     subtest("lossy", test_lossy);
     subtest("test-nondecryptable-initial", test_nondecryptable_initial);
     subtest("set_cc", test_set_cc);
+    subtest("set-pacer-rate", test_set_pacer_rate);
+    subtest("set-cwnd", test_set_cwnd);
+    subtest("cwnd-bypass", test_cwnd_bypass);
     subtest("ecn-index-from-bits", test_ecn_index_from_bits);
     subtest("jumpstart-cwnd", test_jumpstart_cwnd);
     subtest("jumpstart", test_jumpstart);

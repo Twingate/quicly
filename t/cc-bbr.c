@@ -172,7 +172,7 @@ static void test_undo_in_startup(void)
     ok(cc.num_loss_episodes_undone == 2);
 }
 
-static void test_bw_and_pacing(void)
+static void test_bw(void)
 {
     quicly_cc_t cc = {NULL, 12000};
     quicly_cc_bbr_counters_init(&cc);
@@ -183,11 +183,32 @@ static void test_bw_and_pacing(void)
     ok(cc.state.bbr.bw_latest == 2000000);
     ok(cc.state.bbr.bw_maximum == 3000000);
 
-    quicly_cc_bbr_counters_update_pacing(&cc, 2500000, 8192);
-    quicly_cc_bbr_counters_update_pacing(&cc, 1500000, 4096);
-    ok(cc.state.bbr.pacing_rate_latest == 1500000);
-    ok(cc.state.bbr.pacing_rate_maximum == 2500000);
-    ok(cc.state.bbr.send_quantum == 4096);
+}
+
+static void test_pacer_rate(void)
+{
+    quicly_cc_t cc = {NULL, 12000};
+    quicly_cc_bbr_counters_init(&cc);
+
+    /* zero until BBR reports a rate, which is what keeps `calc_pacer_send_rate` on its cwnd/SRTT formula */
+    ok(cc.pacer_rate == 0);
+
+    /* bytes/sec in, bytes/msec out */
+    ok(quicly_cc_bbr_calc_pacer_rate(1500000) == 1500);
+
+    /* rounds down rather than up: better for the pacer to lag than to overshoot */
+    ok(quicly_cc_bbr_calc_pacer_rate(1500999) == 1500);
+
+    /* a rate too small to represent clamps to 1, because 0 would mean "no rate" and hand pacing back to cwnd/SRTT */
+    ok(quicly_cc_bbr_calc_pacer_rate(400) == 1);
+    ok(quicly_cc_bbr_calc_pacer_rate(0.5) == 1);
+
+    /* absurd rates saturate rather than wrap */
+    ok(quicly_cc_bbr_calc_pacer_rate(1e18) == UINT32_MAX);
+
+    /* no rate at all releases the override */
+    ok(quicly_cc_bbr_calc_pacer_rate(0) == 0);
+    ok(quicly_cc_bbr_calc_pacer_rate(-1) == 0);
 }
 
 static void test_telemetry_disabled(void)
@@ -302,7 +323,8 @@ void test_cc_bbr(void)
     subtest("app-limited", test_app_limited);
     subtest("reused-counters", test_reused_counters);
     subtest("undo-in-startup", test_undo_in_startup);
-    subtest("bw-and-pacing", test_bw_and_pacing);
+    subtest("bw", test_bw);
+    subtest("pacer-rate", test_pacer_rate);
     subtest("telemetry-disabled", test_telemetry_disabled);
     subtest("telemetry-ring", test_telemetry_ring);
 }

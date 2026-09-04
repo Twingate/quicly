@@ -155,6 +155,9 @@ void quicly_cc_bbr_counters_init(quicly_cc_t *cc)
 {
     memset(&cc->state.bbr, 0, sizeof(cc->state.bbr));
 
+    /* until BBR reports a rate, the pacer falls back to deriving one from cwnd and SRTT */
+    cc->pacer_rate = 0;
+
     /* the generic counters BBR reuses, initialized as the other controllers do */
     cc->cwnd_initial = cc->cwnd_maximum = cc->cwnd;
     cc->cwnd_minimum = UINT32_MAX;
@@ -230,12 +233,4 @@ void quicly_cc_bbr_counters_update(quicly_cc_t *cc, quicly_cc_bbr_notification_t
 
     cc->state.bbr.prev_cc_state = cc_state;
     cc->state.bbr.prev_cc_state_valid = 1;
-}
-
-void quicly_cc_bbr_counters_update_pacing(quicly_cc_t *cc, uint64_t pacing_rate, uint64_t send_quantum)
-{
-    cc->state.bbr.pacing_rate_latest = pacing_rate;
-    if (cc->state.bbr.pacing_rate_maximum < pacing_rate)
-        cc->state.bbr.pacing_rate_maximum = pacing_rate;
-    cc->state.bbr.send_quantum = send_quantum;
 }

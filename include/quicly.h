@@ -1534,6 +1534,52 @@ void quicly_send_datagram_frames(quicly_conn_t *conn, ptls_iovec_t *datagrams, s
  */
 int quicly_set_cc(quicly_conn_t *conn, quicly_cc_type_t *cc);
 /**
+ * Overrides the pacing rate, in bytes per millisecond; zero restores the pacer's own cwnd/SRTT-derived rate. This writes the same
+ * field a rate-based congestion controller publishes (`quicly_cc_t::pacer_rate`), and is intended for measuring the pacer against
+ * a known rate. Note that a rate-based controller overwrites the value on its next update, so an override only persists under a
+ * window-based one (reno, cubic, pico).
+ *
+ * Returns a boolean indicating whether the connection has a pacer at all. When it does not, the value is still recorded but has no
+ * effect, as the pacer is what consumes it.
+ */
+int quicly_set_pacer_rate(quicly_conn_t *conn, uint32_t bytes_per_msec);
+/**
+ * Overrides the congestion window directly, in bytes. For isolating the pacer: `calc_send_window()` gates sending on
+ * `min(cwnd - inflight, pacer_window)`, so setting `cwnd` far above what the pacer allows removes it as a factor, leaving the
+ * pacer rate as the only binding constraint - *as long as the path can actually sustain the configured pacer rate*.
+ *
+ * This is a one-shot override, not a persistent pin - the running congestion controller keeps writing `cwnd` on every ACK and
+ * loss, same as always. Growth uses `quicly_u32_add_saturating()` (clamps at `UINT32_MAX`, no overflow), and a single loss event
+ * only cuts `cwnd` by a constant factor relative to whatever it was at that instant (e.g., CUBIC's `cwnd *= beta`) - so one loss
+ * from `UINT32_MAX` still leaves an enormous window. But **this does not make the override durable under sustained real loss**:
+ * if the configured `pacer_rate` exceeds the path's actual capacity, the resulting loss re-triggers the controller's ordinary
+ * response repeatedly (one cut per recovery episode, each roughly one RTT), and `cwnd` walks itself back down to whatever the
+ * path can truly sustain within a couple of seconds - confirmed in testing: `UINT32_MAX` plus a rate the path couldn't carry
+ * produced 121 loss episodes and `cwnd` converging to a value matching the path's real bandwidth-delay product. Check
+ * `cwnd == cwnd_maximum` and that `num_loss_episodes` hasn't grown during the measurement window before trusting a run. If the
+ * cwnd path must be taken out of the picture entirely regardless of loss, see `quicly_set_cwnd_bypass()` instead.
+ *
+ * Pass `UINT32_MAX` to effectively disable the window. Pass 0 to restore the initial congestion window
+ * (`quicly_cc_calc_initial_cwnd()`), undoing the override rather than leaving the connection at whatever `cwnd` last was.
+ */
+int quicly_set_cwnd(quicly_conn_t *conn, uint32_t cwnd);
+/**
+ * Test-only: enables or disables `cwnd_bypass` (`quicly_cc_t`). While enabled, `calc_send_window()` stops enforcing
+ * `cwnd - inflight` - the congestion controller keeps running exactly as it would otherwise, including its response to real
+ * loss, but nothing gates sending on the `cwnd` it computes. Only the pacer and anti-amplification still apply.
+ *
+ * Unlike `quicly_set_cwnd()`, this is durable: it survives loss, ACKs, everything, because it changes what
+ * `calc_send_window()` enforces rather than the value the controller computes. Use it together with `quicly_set_pacer_rate()` to
+ * push a fixed rate through a window-based controller (CUBIC, reno, pico) regardless of what its `cwnd` would otherwise cap you
+ * to - e.g., to see whether ordinary loss at a target rate is transient/tolerable, as a rough preview of how a rate-based
+ * controller might fare before one exists in this tree. `cwnd` itself remains fully observable via `quicly_get_stats()`
+ * throughout, so the controller's real (bypassed) opinion is never hidden - only unenforced.
+ *
+ * Not something any real congestion controller should ever set on itself; this is an experiment harness knob. Returns 1
+ * always.
+ */
+int quicly_set_cwnd_bypass(quicly_conn_t *conn, int enabled);
+/**
  *
  */
 void quicly_amend_ptls_context(ptls_context_t *ptls);
