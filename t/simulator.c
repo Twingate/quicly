@@ -735,10 +735,19 @@ int main(int argc, char **argv)
     argv[first_sep] = "--";
 
     int sender_count = 0;
+    /* client (sender-side) connections, retained so they can be freed at the end - freeing runs each CC's dispose hook, which is
+     * how BBR's telemetry CSV gets written (QUICLY_BBR_CSV_DIR). */
+    quicly_conn_t *sender_conns[16];
+    size_t num_sender_conns = 0;
     for (int seg_start = first_sep + 1; seg_start < argc;) {
         int seg_end = find_next_separator(argc, argv, seg_start);
         if (seg_end > seg_start) {
-            quicly_context_t flow_ctx = quicctx;
+            /* Heap-allocated, never freed: quicly_connect() stores this pointer in the connection and dereferences it for the
+             * life of the connection (clock callback, transport params, ...). It was previously a block-local, which is
+             * use-after-scope once control leaves this block - benign only until a code path (e.g. loss recovery under -r) sends
+             * after the stack slot is reused. */
+            quicly_context_t *flow_ctx = malloc(sizeof(*flow_ctx));
+            *flow_ctx = quicctx;
             double flow_delay = delay, flow_start = start;
 
             int flow_argc = seg_end - seg_start + 1;
@@ -749,7 +758,7 @@ int main(int argc, char **argv)
             if (seg_end < argc)
                 argv[seg_end] = NULL;
 
-            if (!parse_options(flow_argc, flow_argv, &flow_ctx, &flow_delay, &flow_start, NULL, NULL, NULL, NULL, NULL))
+            if (!parse_options(flow_argc, flow_argv, flow_ctx, &flow_delay, &flow_start, NULL, NULL, NULL, NULL, NULL))
                 exit(1);
             flow_argv[0] = saved_argv0;
             if (seg_end < argc)
@@ -763,7 +772,7 @@ int main(int argc, char **argv)
             struct net_endpoint *client_node = malloc(sizeof(*client_node));
             net_endpoint_init(client_node);
             client_node->start_at = now + flow_start;
-            int ret = quicly_connect(&client_node->conns[0].quic, &flow_ctx, "hello.example.com", &server_node.node.addr.sa,
+            int ret = quicly_connect(&client_node->conns[0].quic, flow_ctx, "hello.example.com", &server_node.node.addr.sa,
                                      &client_node->addr.sa, &next_quic_cid, ptls_iovec_init(NULL, 0), NULL, NULL, NULL);
             ++next_quic_cid.master_id;
             assert(ret == 0);
@@ -774,6 +783,8 @@ int main(int argc, char **argv)
             assert(ret == 0);
             client_node->conns[0].egress = &delay_node->super;
             *node_insert_at++ = &client_node->super;
+            if (num_sender_conns < PTLS_ELEMENTSOF(sender_conns))
+                sender_conns[num_sender_conns++] = client_node->conns[0].quic;
             ++sender_count;
         }
         seg_start = seg_end + 1;
@@ -798,6 +809,10 @@ int main(int argc, char **argv)
 
     while (now < 1000 + length)
         run_nodes(nodes);
+
+    /* free the sender connections so each CC's dispose hook runs (BBR dumps its telemetry CSV here) */
+    for (size_t i = 0; i < num_sender_conns; ++i)
+        quicly_free(sender_conns[i]);
 
     return 0;
 }

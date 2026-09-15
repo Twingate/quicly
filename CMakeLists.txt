@@ -54,11 +54,10 @@ INCLUDE_DIRECTORIES(
 
 # Vendored picoquic headers for the BBR POC (BBR_POC_PLAN.md). Plain copies, not a submodule (see lib/picoquic-bbr/README.md) -
 # kept out of deps/, where every other subdirectory is a real submodule. lib/picoquic-bbr/bbr.c (also vendored, unmodified) finds
-# them via its own directory automatically; only lib/cc-bbr-common.c, which lives outside that directory, needs the include path
-# added explicitly. Scoped to just that one file rather than added globally so that nothing else can accidentally `#include` a
-# picoquic header - together with bbr.c and (later) lib/cc-bbr.c, it is one of the only files allowed to see picoquic types
-# (BBR_POC_PLAN.md §2.8).
-SET_SOURCE_FILES_PROPERTIES(lib/cc-bbr-common.c PROPERTIES INCLUDE_DIRECTORIES
+# them via its own directory automatically; lib/cc-bbr-common.c and lib/cc-bbr.c, which live outside that directory, need the
+# include path added explicitly. Scoped to just those files rather than added globally so that nothing else can accidentally
+# `#include` a picoquic header - together with bbr.c, they are the only files allowed to see picoquic types (BBR_POC_PLAN.md §2.8).
+SET_SOURCE_FILES_PROPERTIES(lib/cc-bbr-common.c lib/cc-bbr.c PROPERTIES INCLUDE_DIRECTORIES
                             "${CMAKE_CURRENT_SOURCE_DIR}/lib/picoquic-bbr")
 
 SET(PICOTLS_OPENSSL_FILES
@@ -69,6 +68,7 @@ SET(PICOTLS_OPENSSL_FILES
 
 SET(QUICLY_LIBRARY_FILES
     lib/frame.c
+    lib/cc-bbr.c
     lib/cc-bbr-common.c
     lib/picoquic-bbr/bbr.c
     lib/cc-bbr-telemetry.c

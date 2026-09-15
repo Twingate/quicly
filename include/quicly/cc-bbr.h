@@ -23,9 +23,10 @@ extern "C" {
 struct st_quicly_cc_t;
 
 /**
- * BBR's primary state. The values mirror picoquic's `picoquic_bbr_alg_state_t` (`bbr.c`) and are decoded straight out of
- * `picoquic_bbr_observe()`, so **the order must be kept identical**. `lib/cc-bbr.c` is the only place that can see both enums;
- * it static-asserts the correspondence.
+ * BBR's primary state. The values mirror picoquic's `picoquic_bbr_alg_state_t` (defined inside `bbr.c`, not a header) and are
+ * decoded straight out of `picoquic_bbr_observe()`, so **the numeric values must be kept identical**. picoquic's enum is not
+ * referenceable outside `bbr.c`, so `lib/cc-bbr.c` compile-time-asserts these against the literal values bbr.c assigns; keeping
+ * them in sync across a picoquic update is a manual check at sync time (see `lib/picoquic-bbr/README.md`).
  */
 typedef enum en_quicly_cc_bbr_state_t {
     QUICLY_CC_BBR_STARTUP = 0,
@@ -107,8 +108,9 @@ typedef struct st_quicly_cc_bbr_sample_t {
 } quicly_cc_bbr_sample_t;
 
 /**
- * In-memory ring of `quicly_cc_bbr_sample_t`, dumped as CSV when the connection closes. Opaque; heap-allocated only when telemetry
- * is switched on, so a connection running without it pays nothing.
+ * In-memory buffer of `quicly_cc_bbr_sample_t`, dumped as CSV when the connection closes. Fills once and then stops recording
+ * (keeping the *start* of the connection), rather than rolling over. Opaque; heap-allocated only when telemetry is switched on,
+ * so a connection running without it pays nothing.
  */
 typedef struct st_quicly_cc_bbr_telemetry_t quicly_cc_bbr_telemetry_t;
 
@@ -118,7 +120,7 @@ typedef struct st_quicly_cc_bbr_telemetry_t quicly_cc_bbr_telemetry_t;
 #define QUICLY_CC_BBR_TELEMETRY_DEFAULT_ROWS 4096
 
 /**
- * Allocates a telemetry ring iff `QUICLY_BBR_CSV_DIR` names a directory, returning NULL otherwise (i.e., NULL means "telemetry is
+ * Allocates a telemetry buffer iff `QUICLY_BBR_CSV_DIR` names a directory, returning NULL otherwise (i.e., NULL means "telemetry is
  * off", not "out of memory" - it is not an error). The CSV is written into that directory by `quicly_cc_bbr_telemetry_destroy`.
  */
 quicly_cc_bbr_telemetry_t *quicly_cc_bbr_telemetry_create(void);

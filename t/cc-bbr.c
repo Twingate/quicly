@@ -255,7 +255,7 @@ static char *take_csv_first_line(const char *dir)
     return line;
 }
 
-static void test_telemetry_ring(void)
+static void test_telemetry_fill_once(void)
 {
     char dir[] = "/tmp/quicly-bbr-test-XXXXXX";
     ok(mkdtemp(dir) != NULL);
@@ -265,7 +265,7 @@ static void test_telemetry_ring(void)
     quicly_cc_bbr_telemetry_t *telemetry = quicly_cc_bbr_telemetry_create();
     ok(telemetry != NULL);
 
-    /* overfill: 6 rows into a ring of 4 retains the last 4, in order */
+    /* overfill: 6 rows into a buffer of 4 keeps the FIRST 4 (fill-once, drop the rest) */
     for (uint64_t i = 0; i < 6; ++i) {
         quicly_cc_bbr_sample_t sample = {0};
         sample.now_us = 1000 + i;
@@ -275,8 +275,8 @@ static void test_telemetry_ring(void)
         sample.bw = 500000;
         quicly_cc_bbr_telemetry_record(telemetry, &sample);
     }
-    ok(quicly_cc_bbr_telemetry_num_recorded(telemetry) == 6);
-    ok(quicly_cc_bbr_telemetry_num_retained(telemetry) == 4);
+    ok(quicly_cc_bbr_telemetry_num_recorded(telemetry) == 6); /* all 6 events counted (so truncation is visible) */
+    ok(quicly_cc_bbr_telemetry_num_retained(telemetry) == 4); /* but only the first 4 stored */
 
     char *buf = NULL;
     size_t buflen = 0;
@@ -284,15 +284,16 @@ static void test_telemetry_ring(void)
     quicly_cc_bbr_telemetry_dump(telemetry, fp);
     fclose(fp);
 
-    /* header, then the four surviving rows oldest-first */
+    /* header, then the first four rows in order */
     ok(strncmp(buf, "now_us,notification,", 20) == 0);
-    ok(strstr(buf, "\n1002,ack,") != NULL);
-    ok(strstr(buf, "\n1005,ack,") != NULL);
-    ok(strstr(buf, "\n1001,ack,") == NULL); /* evicted */
+    ok(strstr(buf, "\n1000,ack,") != NULL);
+    ok(strstr(buf, "\n1003,ack,") != NULL);
+    ok(strstr(buf, "\n1004,ack,") == NULL); /* dropped (buffer full) */
+    ok(strstr(buf, "\n1005,ack,") == NULL); /* dropped */
     ok(strstr(buf, "probe_bw_cruise") != NULL);
     ok(strstr(buf, ",500000\n") != NULL);
     /* the first retained row must precede the last */
-    ok(strstr(buf, "\n1002,ack,") < strstr(buf, "\n1005,ack,"));
+    ok(strstr(buf, "\n1000,ack,") < strstr(buf, "\n1003,ack,"));
 
     size_t num_lines = 0;
     for (const char *p = buf; (p = strchr(p, '\n')) != NULL; ++p)
@@ -326,5 +327,5 @@ void test_cc_bbr(void)
     subtest("bw", test_bw);
     subtest("pacer-rate", test_pacer_rate);
     subtest("telemetry-disabled", test_telemetry_disabled);
-    subtest("telemetry-ring", test_telemetry_ring);
+    subtest("telemetry-fill-once", test_telemetry_fill_once);
 }

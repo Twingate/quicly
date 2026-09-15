@@ -93,6 +93,22 @@ typedef struct st_quicly_cc_t {
      */
     uint32_t pacer_rate;
     /**
+     * Microsecond companion of the `now` (milliseconds) passed to the `cc_on_*` callbacks: quicly sets this to
+     * `conn->stash.now_us` immediately before invoking any of them. Window-based controllers ignore it; rate-based ones (BBR)
+     * need sub-millisecond time, which the `int64_t now` parameter cannot express. Valid only for the duration of a callback.
+     */
+    uint64_t now_us;
+    /**
+     * Delivery-rate sample inputs for the current `cc_on_acked` call, set by quicly immediately before invoking it. Rate-based
+     * controllers (BBR) estimate bandwidth as `delivered_since_sent / rtt`; the delta must be measured from when the acked packet
+     * was *sent* (using the send-time snapshots on `quicly_sent_packet_t`), not the bytes of this one ACK - feeding one ACK's
+     * bytes understates the rate by the number of packets in flight per RTT and pins the estimate. `inflight_prior` is the
+     * bytes-in-flight snapshot from that same packet's send time. Window-based controllers ignore both. Valid only during a
+     * `cc_on_acked` call.
+     */
+    uint64_t delivered_since_sent;
+    uint64_t inflight_prior;
+    /**
      * Packet number indicating end of recovery period, if in recovery.
      */
     uint64_t recovery_end;
@@ -363,16 +379,21 @@ struct st_quicly_cc_type_t {
      * [optional] turns on rapid start
      */
     void (*enable_rapid_start)(quicly_cc_t *cc, int64_t now);
+    /**
+     * [optional] Releases any heap state the controller hung off `quicly_cc_t` (e.g. BBR's per-connection picoquic state and
+     * telemetry). Called once from `quicly_free`. Controllers whose state is entirely inline leave this NULL.
+     */
+    void (*cc_dispose)(quicly_cc_t *cc);
 };
 
 /**
  * The type objects for each CC. These can be used for testing the type of each `quicly_cc_t`.
  */
-extern quicly_cc_type_t quicly_cc_type_reno, quicly_cc_type_cubic, quicly_cc_type_pico;
+extern quicly_cc_type_t quicly_cc_type_reno, quicly_cc_type_cubic, quicly_cc_type_pico, quicly_cc_type_bbr;
 /**
  * The factory methods for each CC.
  */
-extern struct st_quicly_init_cc_t quicly_cc_reno_init, quicly_cc_cubic_init, quicly_cc_pico_init;
+extern struct st_quicly_init_cc_t quicly_cc_reno_init, quicly_cc_cubic_init, quicly_cc_pico_init, quicly_cc_bbr_init;
 
 /**
  * A null-terminated list of all CC types.

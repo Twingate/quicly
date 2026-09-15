@@ -255,6 +255,13 @@ static int cubic_on_switch(quicly_cc_t *cc)
         return 1;
     }
 
+    if (cc->type == &quicly_cc_type_bbr) {
+        /* BBR's per-connection state was already released by quicly_set_cc(); its window semantics don't map onto cubic's, so
+         * start cubic fresh from the initial window. */
+        cubic_reset(cc, cc->cwnd_initial);
+        return 1;
+    }
+
     return 0;
 }
 

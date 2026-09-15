@@ -13,44 +13,14 @@
 #include "picoquic_internal.h"
 #include "cc_common.h"
 #include "quicly/cc.h"
+#include "cc-bbr-shim.h"
 
 /*
  * The three functions below need values quicly already hands the adapter as callback parameters on every `cc_on_*` invocation
- * (`next_pn`, `largest_acked`, `cc_limited` — see `struct st_quicly_cc_type_t` in include/quicly/cc.h) and, for the pacing
- * functions, the `quicly_cc_t*` the adapter is driving. None of that is reachable from a bare `picoquic_path_t*` on its own, so
- * the adapter (`cc-bbr.c`, step 6) is expected to populate one of these per connection and make it recoverable from the
- * `picoquic_path_t*` bbr.c hands back into these functions (e.g. by embedding `picoquic_path_t` as the first member of a wrapper
- * struct and casting).
- *
- * step 6 TODO: replace `quicly_cc_bbr_shim_of()` below with the real per-connection lookup and delete this stub. Until then it is
- * unreachable dead code — nothing in this tree calls `picoquic_bbr_notify()` yet (BBR_POC_PLAN.md §8's acceptance bar for this
- * step is compiling and linking with the notify path never exercised), so returning NULL here is safe: if this ever executes
- * before step 6 replaces it, that is itself the bug to fix.
+ * (`next_pn`, `largest_acked`, `cc_limited` — see `struct st_quicly_cc_type_t` in include/quicly/cc.h). None of that is reachable
+ * from a bare `picoquic_path_t*` on its own, so they go through `quicly_cc_bbr_shim_of()` (defined in `cc-bbr.c`, declared in
+ * `cc-bbr-shim.h`), which the adapter keeps refreshed per notification.
  */
-typedef struct st_quicly_cc_bbr_shim_t {
-    /**
-     * next packet number to send; mirrors the `next_pn` parameter every `cc_on_*` callback already receives
-     */
-    uint64_t next_pn;
-    /**
-     * largest acked packet number; mirrors `cc_on_acked`'s `largest_acked` parameter
-     */
-    uint64_t largest_acked_pn;
-    /**
-     * whether the flow is currently cwnd-limited; mirrors `cc_on_acked`'s `cc_limited` parameter
-     */
-    int is_cwnd_limited;
-    /**
-     * the connection's congestion controller state, for the pacing callbacks to reach `cc->pacer_rate` / `cc->state.bbr`
-     */
-    quicly_cc_t *cc;
-} quicly_cc_bbr_shim_t;
-
-static quicly_cc_bbr_shim_t *quicly_cc_bbr_shim_of(picoquic_path_t *path_x)
-{
-    (void)path_x;
-    return NULL;
-}
 
 uint64_t picoquic_cc_get_sequence_number(picoquic_cnx_t *cnx, picoquic_path_t *path_x)
 {

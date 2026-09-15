@@ -1288,6 +1288,29 @@ static void test_set_cc(void)
     ret = quicly_get_stats(conn, &stats);
     ok(ret == 0);
     ok(strcmp(stats.cc.type->name, "reno") == 0);
+
+    // reno to bbr (allocates BBR's per-connection state)
+    quicly_set_cc(conn, &quicly_cc_type_bbr);
+    ret = quicly_get_stats(conn, &stats);
+    ok(ret == 0);
+    ok(strcmp(stats.cc.type->name, "bbr") == 0);
+    ok(stats.cc.state.bbr.path != NULL);
+
+    // bbr to bbr (no-op, must not reallocate/leak)
+    void *bbr_state_before = stats.cc.state.bbr.path;
+    quicly_set_cc(conn, &quicly_cc_type_bbr);
+    ret = quicly_get_stats(conn, &stats);
+    ok(ret == 0);
+    ok(strcmp(stats.cc.type->name, "bbr") == 0);
+    ok(stats.cc.state.bbr.path == bbr_state_before);
+
+    // bbr to cubic (must dispose BBR's state via quicly_set_cc; ASan would flag a leak otherwise)
+    quicly_set_cc(conn, &quicly_cc_type_cubic);
+    ret = quicly_get_stats(conn, &stats);
+    ok(ret == 0);
+    ok(strcmp(stats.cc.type->name, "cubic") == 0);
+
+    quicly_free(conn);
 }
 
 void test_ecn_index_from_bits(void)

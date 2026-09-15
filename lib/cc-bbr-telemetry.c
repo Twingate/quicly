@@ -22,11 +22,12 @@ struct st_quicly_cc_bbr_telemetry_t {
      */
     size_t capacity;
     /**
-     * index of the next slot to write
+     * number of slots filled so far; stops advancing at `capacity`
      */
     size_t pos;
     /**
-     * total recorded, which keeps counting after the ring wraps
+     * total number of events seen, which keeps counting even after the buffer is full - so `num_recorded > capacity` tells you
+     * capture was truncated and you are looking only at the first `capacity` events
      */
     size_t num_recorded;
     quicly_cc_bbr_sample_t samples[1]; /* variable length */
@@ -89,9 +90,10 @@ void quicly_cc_bbr_telemetry_record(quicly_cc_bbr_telemetry_t *telemetry, const 
     if (telemetry == NULL)
         return;
 
-    telemetry->samples[telemetry->pos] = *sample;
-    if (++telemetry->pos == telemetry->capacity)
-        telemetry->pos = 0;
+    /* Capture the *beginning* of the connection: fill once, then stop, rather than rolling over and keeping the tail. Later
+     * events are dropped (still counted in num_recorded so truncation is visible). */
+    if (telemetry->pos < telemetry->capacity)
+        telemetry->samples[telemetry->pos++] = *sample;
     ++telemetry->num_recorded;
 }
 
@@ -116,11 +118,11 @@ void quicly_cc_bbr_telemetry_dump(quicly_cc_bbr_telemetry_t *telemetry, FILE *fp
                 "delivered_since_sent,lost_since_sent,inflight_prior,is_app_limited,cwnd,pacing_rate,send_quantum,state,ack_phase,"
                 "filled_pipe,in_recovery,pto_recovery,packet_conservation,idle_restart,bw\n");
 
-    size_t retained = quicly_cc_bbr_telemetry_num_retained(telemetry),
-           oldest = telemetry->num_recorded < telemetry->capacity ? 0 : telemetry->pos;
+    /* fill-once buffer: rows are stored in order starting at index 0, so just walk the first `pos` of them */
+    size_t retained = quicly_cc_bbr_telemetry_num_retained(telemetry);
 
     for (size_t i = 0; i < retained; ++i) {
-        const quicly_cc_bbr_sample_t *s = telemetry->samples + (oldest + i) % telemetry->capacity;
+        const quicly_cc_bbr_sample_t *s = telemetry->samples + i;
         fprintf(fp,
                 "%" PRIu64 ",%s,%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64
                 ",%" PRIu64 ",%u,%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%s,%u,%u,%u,%u,%u,%u,%" PRIu64 "\n",
