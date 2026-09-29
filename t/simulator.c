@@ -35,8 +35,6 @@
 #include "quicly/cc.h"
 #include "quicly/defaults.h"
 
-FILE *quicly_trace_fp;
-
 static void sim_random_bytes(void *dst, size_t len)
 {
     static struct {

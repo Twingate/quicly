@@ -26,11 +26,9 @@
 extern "C" {
 #endif
 
-#include <netinet/in.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
-#include <sys/socket.h>
 #include <sys/types.h>
 #include "picotls.h"
 #include "quicly/constants.h"
@@ -1765,6 +1763,8 @@ inline void quicly_byte_to_hex(char *dst, uint8_t v)
     dst[0] = "0123456789abcdef"[v >> 4];
     dst[1] = "0123456789abcdef"[v & 0xf];
 }
+
+extern FILE *quicly_trace_fp;
 
 #ifdef __cplusplus
 }
