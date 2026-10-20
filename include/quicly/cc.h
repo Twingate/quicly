@@ -464,6 +464,10 @@ struct st_quicly_cc_type_t {
      * does not allocate one, so such a controller must refuse to be switched into.
      */
     uint8_t requires_pacing : 1;
+    /**
+     * If set, cc_on_acked is also called for an ACK with 0 bytes (duplicate ACKs are still ignored).
+     */
+    uint8_t wants_zero_byte_acks : 1;
 };
 
 /**
