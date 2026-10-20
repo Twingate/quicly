@@ -247,6 +247,10 @@ typedef struct st_quicly_cc_t {
      */
     uint32_t ssthresh;
     /**
+     * Controller-supplied pacing rate in bytes per millisecond; 0 means derive it from cwnd/SRTT.
+     */
+    uint32_t pacing_rate;
+    /**
      * Packet number indicating end of recovery period, if in recovery.
      */
     uint64_t recovery_end;

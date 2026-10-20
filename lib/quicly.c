@@ -3661,6 +3661,9 @@ static uint32_t calc_pacer_send_rate(quicly_conn_t *conn)
 {
     uint32_t multiplier;
 
+    if (conn->egress.cc.pacing_rate != 0)
+        return conn->egress.cc.pacing_rate;
+
     if (conn->egress.cc.num_loss_episodes == 0) {
         if (quicly_cc_in_jumpstart(&conn->egress.cc)) {
             multiplier = 1;
