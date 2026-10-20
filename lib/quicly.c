@@ -2169,6 +2169,8 @@ static quicly_error_t promote_path(quicly_conn_t *conn, size_t path_index)
     }
 
     /* reset CC (FIXME flush sentmap and reset loss recovery) */
+    if (conn->egress.cc.type->cc_dispose != NULL)
+        conn->egress.cc.type->cc_dispose(&conn->egress.cc);
     conn->egress.cc.type->cc_init->cb(conn->egress.cc.type->cc_init, &conn->egress.cc, &get_egress_context(conn)->cc,
                                       conn->egress.max_udp_payload_size, conn->stash.now_double);
 
@@ -2317,6 +2319,8 @@ void quicly_free(quicly_conn_t *conn)
 
     unlock_now(conn);
 
+    if (conn->egress.cc.type->cc_dispose != NULL)
+        conn->egress.cc.type->cc_dispose(&conn->egress.cc);
     if (conn->egress.pacer != NULL)
         free(conn->egress.pacer);
     if (conn->connection_close.reason_phrase != NULL)
@@ -5871,7 +5875,13 @@ void quicly_send_datagram_frames(quicly_conn_t *conn, ptls_iovec_t *datagrams, s
 
 int quicly_set_cc(quicly_conn_t *conn, quicly_cc_type_t *cc)
 {
-    return cc->cc_switch(&conn->egress.cc);
+    /* cc_switch may reset egress.cc: keep a copy and dispose of it only if the switch succeeded */
+    quicly_cc_t old = conn->egress.cc;
+    if (!cc->cc_switch(&conn->egress.cc))
+        return 0;
+    if (old.type != cc && old.type->cc_dispose != NULL)
+        old.type->cc_dispose(&old);
+    return 1;
 }
 
 int quicly_uses_alt_egress(quicly_conn_t *conn)

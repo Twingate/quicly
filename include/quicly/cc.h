@@ -455,6 +455,10 @@ struct st_quicly_cc_type_t {
      * [optional] updates whether the sender is CC-limited
      */
     void (*cc_update_cc_limited)(quicly_cc_t *cc, int cc_limited, double now);
+    /**
+     * [optional] Called when the controller is released, to free any state it allocated.
+     */
+    void (*cc_dispose)(quicly_cc_t *cc);
 };
 
 /**
