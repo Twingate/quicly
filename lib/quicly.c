@@ -2787,6 +2787,15 @@ static int collect_transport_parameters(ptls_t *tls, struct st_ptls_handshake_pr
     return type == get_transport_parameters_extension_id(conn->super.version);
 }
 
+static int cc_requires_pacing(const struct st_quicly_init_cc_t *init_cc)
+{
+    /* the controller is built later, so find its type by its factory */
+    for (quicly_cc_type_t **type = quicly_cc_all_types; *type != NULL; ++type)
+        if ((*type)->cc_init == init_cc)
+            return (*type)->requires_pacing;
+    return 0;
+}
+
 static quicly_conn_t *create_connection(quicly_context_t *ctx, uint32_t protocol_version, const char *server_name,
                                         struct sockaddr *remote_addr, struct sockaddr *local_addr, ptls_iovec_t *remote_cid,
                                         const quicly_cid_plaintext_t *local_cid, ptls_handshake_properties_t *handshake_properties,
@@ -2832,7 +2841,8 @@ static quicly_conn_t *create_connection(quicly_context_t *ctx, uint32_t protocol
     conn->super.data = appdata;
     if (enable_with_ratio255(ctx->alt_egress_ratio, ctx->tls->random_bytes))
         conn->egress.alt_ctx = 1;
-    if (get_egress_context(conn)->pacing && (pacer = malloc(sizeof(*pacer))) == NULL) {
+    if ((get_egress_context(conn)->pacing || cc_requires_pacing(get_egress_context(conn)->cc.init_cc)) &&
+        (pacer = malloc(sizeof(*pacer))) == NULL) {
         ptls_free(tls);
         free(conn);
         return NULL;

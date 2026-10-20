@@ -459,6 +459,11 @@ struct st_quicly_cc_type_t {
      * [optional] Called when the controller is released, to free any state it allocated.
      */
     void (*cc_dispose)(quicly_cc_t *cc);
+    /**
+     * If set, the pacer is enabled regardless of quicly_context_t::egress[].pacing. quicly_set_cc
+     * does not allocate one, so such a controller must refuse to be switched into.
+     */
+    uint8_t requires_pacing : 1;
 };
 
 /**
