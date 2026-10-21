@@ -450,9 +450,13 @@ struct st_quicly_conn_t {
          */
         quicly_ratemeter_t ratemeter;
         /**
-         * total bytes acked and lost on this path, for rate-based CCs; reset by promote_path
+         * delivery state for rate-based CCs: low 32 bits of the microsecond times of the latest
+         * ack and of the send time of the packet it acked, and the total bytes acked and lost on
+         * this path; reset by promote_path
          */
         struct {
+            uint32_t delivered_time_us;
+            uint32_t delivered_sent_time_us;
             uint64_t delivered;
             uint64_t lost;
         } delivery;
@@ -2153,6 +2157,12 @@ static int delete_path(quicly_conn_t *conn, size_t path_index)
     return do_delete_path(conn, path);
 }
 
+/* low 32 bits of a millisecond time in microseconds */
+static uint32_t delivery_time_us(double at)
+{
+    return (uint32_t)(uint64_t)(at * 1000);
+}
+
 /**
  * paths[0] (the default path) is freed and the path specified by `path_index` is promoted
  */
@@ -2194,6 +2204,8 @@ static quicly_error_t promote_path(quicly_conn_t *conn, size_t path_index)
     quicly_ratemeter_init(&conn->egress.ratemeter);
 
     /* reset delivery state */
+    conn->egress.delivery.delivered_time_us = delivery_time_us(conn->stash.now_double);
+    conn->egress.delivery.delivered_sent_time_us = conn->egress.delivery.delivered_time_us;
     conn->egress.delivery.delivered = 0;
     conn->egress.delivery.lost = 0;
 
@@ -4036,12 +4048,20 @@ static quicly_error_t commit_send_packet(quicly_conn_t *conn, quicly_send_contex
     }
     int app_limited = !quicly_ratemeter_is_cc_limited(&conn->egress.ratemeter);
     if (quicly_sentmap_is_open(&conn->egress.loss.sentmap)) {
+        /* with nothing in flight, start the delivery-rate reference here so idle time is not measured */
+        if (conn->egress.loss.sentmap.bytes_in_flight == 0) {
+            uint32_t now_us = delivery_time_us(conn->stash.now_double);
+            conn->egress.delivery.delivered_time_us = now_us;
+            conn->egress.delivery.delivered_sent_time_us = now_us;
+        }
         int cc_limited = conn->egress.loss.sentmap.bytes_in_flight + packet_bytes_in_flight >=
                          conn->egress.cc.cwnd / 2; /* for the rationale behind this formula, see handle_ack_frame */
         quicly_sent_packet_snapshot_t snapshot = {
             .app_limited = app_limited,
             .delivered_prior = conn->egress.delivery.delivered,
             .lost_prior = conn->egress.delivery.lost,
+            .delivered_time_prior_us = conn->egress.delivery.delivered_time_us,
+            .delivered_sent_time_prior_us = conn->egress.delivery.delivered_sent_time_us,
         };
         quicly_sentmap_set_snapshot(&conn->egress.loss.sentmap, &snapshot);
         quicly_sentmap_commit(&conn->egress.loss.sentmap, (uint16_t)packet_bytes_in_flight, cc_limited, on_promoted_path);
@@ -6384,6 +6404,27 @@ static quicly_error_t handle_reset_stream_frame(quicly_conn_t *conn, struct st_q
     return 0;
 }
 
+/* delivery rate over the interval an ack covers: bytes delivered divided by the longer of
+ * the receive and send intervals (BBR draft 4.1.2); 0 if the packet is older than the last
+ * sample or the interval is shorter than the minimum RTT */
+static uint64_t sample_delivery_rate(quicly_conn_t *conn, const quicly_sent_packet_t *acked)
+{
+    uint32_t now_us = delivery_time_us(conn->stash.now_double);
+    uint32_t sent_us = delivery_time_us(acked->sent_at);
+    uint64_t bandwidth_estimate = 0;
+
+    if ((int32_t)(sent_us - conn->egress.delivery.delivered_sent_time_us) >= 0) {
+        uint32_t received_over = now_us - acked->delivered_time_prior_us;
+        uint32_t sent_over = sent_us - acked->delivered_sent_time_prior_us;
+        uint32_t interval = sent_over > received_over ? sent_over : received_over;
+        if (interval >= conn->egress.loss.rtt.minimum * 1000)
+            bandwidth_estimate = (uint64_t)delivered_since_sent(conn, acked) * 1000000 / interval;
+        conn->egress.delivery.delivered_sent_time_us = sent_us;
+    }
+    conn->egress.delivery.delivered_time_us = now_us;
+    return bandwidth_estimate;
+}
+
 /* ECN counts including this ack; quicly updates its own totals only after the CC is called */
 static void ecn_counts_with_ack(quicly_conn_t *conn, const quicly_ack_frame_t *frame, size_t epoch, uint64_t *counts)
 {
@@ -6544,10 +6585,12 @@ static quicly_error_t handle_ack_frame(quicly_conn_t *conn, struct st_quicly_han
 
     /* OnPacketAcked and OnPacketAckedCC */
     if (bytes_acked > 0 || (conn->egress.cc.type->wants_zero_byte_acks && largest_cc_acked.packet_number != UINT64_MAX)) {
+        uint64_t bandwidth_estimate = sample_delivery_rate(conn, &largest_cc_acked);
         quicly_cc_bbr_ack_params_t bbr_params = {
             .delivered_since_sent = delivered_since_sent(conn, &largest_cc_acked),
             .inflight_prior = largest_cc_acked.inflight_prior,
             .lost_since_sent = lost_since_sent(conn, &largest_cc_acked),
+            .bandwidth_estimate = bandwidth_estimate,
             .app_limited = largest_cc_acked.app_limited,
         };
         ecn_counts_with_ack(conn, &frame, state->epoch, bbr_params.ecn_counts);

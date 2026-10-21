@@ -254,7 +254,8 @@ static void sync_inputs(quicly_cc_bbr_conn_t *bc, const quicly_loss_t *loss, uin
     bc->path.smoothed_rtt = (uint64_t)(loss->rtt.smoothed * 1000);
     bc->path.rtt_variant = (uint64_t)(loss->rtt.variance * 1000);
     bc->path.send_mtu = max_udp_payload_size;
-    /* leave bandwidth_estimate at 0 so BBR derives the rate from rtt_measurement */
+    /* set on the ack path when a sample is measured; an ack without one leaves the previous
+     * value, which BBR reuses (picoquic's interface has no "no sample") */
 }
 
 /* Refresh cb_args from the callback parameters so the cc_common helpers see this call's values. */
@@ -427,6 +428,10 @@ static void bbr_on_acked(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t by
     /* From quicly's rate meter, which counts pacing and a full send buffer as limits of our own
      * rather than the application's; the cwnd/2 heuristic behind `cc_limited` does not. */
     int is_app_limited = bbr_params->app_limited;
+
+    /* a measured rate replaces BBR's delivered/rtt fallback; 0 means no sample, keep the last */
+    if (bbr_params->bandwidth_estimate != 0)
+        bc->path.bandwidth_estimate = bbr_params->bandwidth_estimate;
 
     bc->path.ecn_ect0_total_remote = bbr_params->ecn_counts[0];
     bc->path.ecn_ect1_total_remote = bbr_params->ecn_counts[1];
