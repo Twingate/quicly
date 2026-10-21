@@ -1,5 +1,5 @@
 /*
- * Inputs and state names for the BBR congestion controller. Does not include
+ * Inputs, the log call and state names for the BBR congestion controller. Does not include
  * any picoquic header to keep the namespaces separate.
  */
 
@@ -13,6 +13,7 @@ extern "C" {
 #include <stdint.h>
 
 struct st_quicly_cc_t;
+struct st_quicly_conn_t;
 
 /**
  * Per-ACK inputs that only BBR consumes in cc_on_acked.
@@ -73,6 +74,11 @@ typedef struct st_quicly_cc_bbr_loss_params_t {
  */
 const char *quicly_cc_bbr_state_name(unsigned state);
 
+/**
+ * emits the quicly:bbr event for the latest notification; a no-op for other controllers
+ * or when BBR was not notified since the previous call
+ */
+void quicly_cc_bbr_log(struct st_quicly_conn_t *conn, struct st_quicly_cc_t *cc);
 
 #ifdef __cplusplus
 }

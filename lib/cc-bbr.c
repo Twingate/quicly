@@ -54,6 +54,49 @@ typedef enum en_quicly_cc_bbr_notification_t {
 #define QUICLY_CC_BBR_OBSERVED_IDLE_RESTART(w) ((unsigned)(((w) >> 20) & 1))
 
 /**
+ * One bbr log row: inputs synced in, outputs read back, and BBR's own view. One per notification.
+ */
+typedef struct st_quicly_cc_bbr_sample_t {
+    /**
+     * time of the notification, microseconds
+     */
+    uint64_t now_us;
+    /**
+     * which notification this row is for; a `quicly_cc_bbr_notification_t`
+     */
+    uint8_t notification;
+    /**
+     * value of `is_app_limited` fed to BBR for this ACK
+     */
+    uint8_t is_app_limited;
+    /**
+     * inputs synced into `picoquic_path_t` / `picoquic_per_ack_state_t`
+     */
+    uint64_t bytes_in_transit;
+    uint64_t delivered;
+    uint64_t rtt_sample_us;
+    uint64_t smoothed_rtt_us;
+    uint64_t bytes_acked;
+    uint64_t bytes_lost;
+    uint64_t delivered_since_sent;
+    uint64_t lost_since_sent;
+    uint64_t inflight_prior;
+    /**
+     * outputs read back out after the call
+     */
+    uint64_t cwnd;
+    uint64_t pacing_rate;
+    uint64_t send_quantum;
+    /**
+     * BBR's own view: the packed word from `picoquic_bbr_observe()` and its bandwidth estimate
+     */
+    uint64_t cc_state;
+    uint64_t bw;
+} quicly_cc_bbr_sample_t;
+
+static const char *quicly_cc_bbr_notification_name(unsigned notification);
+
+/**
  * Converts BBR's pacing rate (bytes/sec) to quicly's bytes/ms. A positive rate never becomes 0,
  * which would mean "no rate"; an implausible one saturates.
  */
@@ -97,6 +140,9 @@ typedef struct st_quicly_cc_bbr_conn_t {
     picoquic_quic_t quic;
     quicly_cc_bbr_cb_args_t cb_args;
     quicly_cc_t *cc;
+    uint64_t send_quantum;         /* the latest from picoquic_update_pacing_rate */
+    quicly_cc_bbr_sample_t sample; /* the latest notification, for the bbr log point */
+    uint8_t has_new_sample;
 } quicly_cc_bbr_conn_t;
 
 static quicly_cc_bbr_conn_t *conn_of(picoquic_path_t *path_x)
@@ -125,7 +171,7 @@ void picoquic_update_pacing_rate(picoquic_path_t *path_x, double pacing_rate, ui
 {
     quicly_cc_t *cc = conn_of(path_x)->cc;
     cc->pacing_rate = quicly_cc_bbr_calc_pacer_rate(pacing_rate);
-    (void)quantum;
+    conn_of(path_x)->send_quantum = quantum;
 }
 
 /* splitmix64, copied verbatim from picoquic's util.c. BBR draws its ProbeBW wait jitter from
@@ -186,7 +232,7 @@ void picoquic_update_pacing_data(picoquic_path_t *path_x, int slow_start)
 
 /* ---- adapter core ---------------------------------------------------------------------------- */
 
-/* Decode BBR's current state word for the counters. */
+/* Decode BBR's current state word once, for both the log sample and the counters. */
 static uint64_t bbr_observe(quicly_cc_bbr_conn_t *bc, uint64_t *bw)
 {
     uint64_t cc_state = 0;
@@ -261,12 +307,27 @@ static void counters_update(quicly_cc_t *cc, uint64_t cc_state, uint64_t bw, dou
     cc->state.bbr.cc_state = cc_state;
 }
 
+/* named `logpoint` because PTLS_LOG__DO_LOG refers to it by that name */
+PTLS_LOG_DEFINE_POINT(quicly, bbr, logpoint);
+
+/* The log sample for this notification: bc->sample, cleared, when the bbr log point is on; NULL
+ * otherwise, so nothing is filled or copied while logging is off. */
+static quicly_cc_bbr_sample_t *start_sample(quicly_cc_bbr_conn_t *bc)
+{
+    if (PTLS_LIKELY(ptls_log_point_maybe_active(&logpoint) == 0))
+        return NULL;
+    memset(&bc->sample, 0, sizeof(bc->sample));
+    return &bc->sample;
+}
+
 /*
  * Shared tail of every notify path: run BBR, copy its window out, fold the observation into
- * the counters.
+ * the counters and, if logging, the sample. `sample` carries the caller-filled inputs; this fills
+ * the outputs.
  */
 static void notify(quicly_cc_bbr_conn_t *bc, quicly_cc_t *cc, picoquic_congestion_notification_t pq_notification,
-                   quicly_cc_bbr_notification_t q_notification, picoquic_per_ack_state_t *as, uint64_t now_us, double now)
+                   quicly_cc_bbr_notification_t q_notification, picoquic_per_ack_state_t *as, int is_app_limited, uint64_t now_us,
+                   double now, quicly_cc_bbr_sample_t *sample)
 {
     picoquic_bbr_algorithm_struct.alg_notify(&bc->cnx, &bc->path, pq_notification, as, now_us);
 
@@ -277,11 +338,73 @@ static void notify(quicly_cc_bbr_conn_t *bc, quicly_cc_t *cc, picoquic_congestio
     uint64_t cc_state = bbr_observe(bc, &bw);
     counters_update(cc, cc_state, bw, now);
 
+    if (sample != NULL) {
+        sample->now_us = now_us;
+        sample->notification = (uint8_t)q_notification;
+        sample->is_app_limited = (uint8_t)(is_app_limited != 0);
+        sample->bytes_in_transit = bc->path.bytes_in_transit;
+        sample->delivered = bc->path.delivered;
+        sample->cwnd = cc->cwnd;
+        sample->pacing_rate = cc->pacing_rate;
+        sample->send_quantum = bc->send_quantum;
+        sample->cc_state = cc_state;
+        sample->bw = bw;
+        bc->has_new_sample = 1;
+    }
+
     /* BBR keeps its min RTT in bbr_state->min_rtt. path.rtt_min only selects picoquic's long-RTT
      * startup, an alternate mode for long-latency paths (like satellite) that we don't support.
      * Only BBRExitProbeRTT writes it, and the check that reads it runs before that in the same
      * notification, so clearing it here keeps that startup, and the stubs it calls, unreachable. */
     bc->path.rtt_min = 0;
+}
+
+void quicly_cc_bbr_log(quicly_conn_t *conn, quicly_cc_t *cc)
+{
+    if (cc->type != &quicly_cc_type_bbr)
+        return;
+    quicly_cc_bbr_conn_t *bc = cc->state.bbr.path;
+    if (!bc->has_new_sample)
+        return;
+    bc->has_new_sample = 0;
+
+    /* QUICLY_LOG_CONN needs quicly.c's private state; this mirrors picotls's PTLS_LOG_CONN */
+    uint32_t active = ptls_log_point_maybe_active(&logpoint);
+    if (PTLS_LIKELY(active == 0))
+        return;
+    ptls_t *tls = quicly_get_tls(conn);
+    ptls_log_conn_state_t *conn_state = ptls_get_log_state(tls);
+    active &= ptls_log_conn_maybe_active(conn_state, ptls_log_getsni_ptls(tls));
+    if (PTLS_LIKELY(active == 0))
+        return;
+    const quicly_cc_bbr_sample_t *s = &bc->sample;
+    PTLS_LOG__DO_LOG(quicly, bbr, conn_state, ptls_log_getsni_ptls(tls), 1, {
+        PTLS_LOG_ELEMENT_PTR(conn, conn);
+        if (conn_state->conn_id != 0)
+            PTLS_LOG_ELEMENT_NUMBER(conn_id, conn_state->conn_id);
+        PTLS_LOG_ELEMENT_NUMBER(now_us, s->now_us);
+        PTLS_LOG_ELEMENT_SAFESTR(notification, quicly_cc_bbr_notification_name(s->notification));
+        PTLS_LOG_ELEMENT_NUMBER(bytes_in_transit, s->bytes_in_transit);
+        PTLS_LOG_ELEMENT_NUMBER(delivered, s->delivered);
+        PTLS_LOG_ELEMENT_NUMBER(rtt_sample_us, s->rtt_sample_us);
+        PTLS_LOG_ELEMENT_NUMBER(smoothed_rtt_us, s->smoothed_rtt_us);
+        PTLS_LOG_ELEMENT_NUMBER(bytes_acked, s->bytes_acked);
+        PTLS_LOG_ELEMENT_NUMBER(bytes_lost, s->bytes_lost);
+        PTLS_LOG_ELEMENT_NUMBER(delivered_since_sent, s->delivered_since_sent);
+        PTLS_LOG_ELEMENT_NUMBER(lost_since_sent, s->lost_since_sent);
+        PTLS_LOG_ELEMENT_NUMBER(inflight_prior, s->inflight_prior);
+        PTLS_LOG_ELEMENT_BOOL(is_app_limited, s->is_app_limited);
+        PTLS_LOG_ELEMENT_NUMBER(cwnd, s->cwnd);
+        PTLS_LOG_ELEMENT_NUMBER(pacing_rate, s->pacing_rate);
+        PTLS_LOG_ELEMENT_NUMBER(send_quantum, s->send_quantum);
+        PTLS_LOG_ELEMENT_SAFESTR(state, quicly_cc_bbr_state_name(QUICLY_CC_BBR_OBSERVED_STATE(s->cc_state)));
+        PTLS_LOG_ELEMENT_NUMBER(ack_phase, QUICLY_CC_BBR_OBSERVED_ACK_PHASE(s->cc_state));
+        PTLS_LOG_ELEMENT_BOOL(filled_pipe, QUICLY_CC_BBR_OBSERVED_FILLED_PIPE(s->cc_state));
+        PTLS_LOG_ELEMENT_BOOL(in_recovery, QUICLY_CC_BBR_OBSERVED_IN_RECOVERY(s->cc_state));
+        PTLS_LOG_ELEMENT_BOOL(packet_conservation, QUICLY_CC_BBR_OBSERVED_PACKET_CONSERVATION(s->cc_state));
+        PTLS_LOG_ELEMENT_BOOL(idle_restart, QUICLY_CC_BBR_OBSERVED_IDLE_RESTART(s->cc_state));
+        PTLS_LOG_ELEMENT_NUMBER(bw, s->bw);
+    });
 }
 
 static void bbr_on_acked(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes, uint64_t largest_acked, uint32_t inflight,
@@ -322,7 +445,17 @@ static void bbr_on_acked(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t by
     as.is_app_limited = is_app_limited;
     as.is_cwnd_limited = cc_limited;
 
-    notify(bc, cc, picoquic_congestion_notification_acknowledgement, QUICLY_CC_BBR_NOTIFY_ACK, &as, now_us, now);
+    quicly_cc_bbr_sample_t *sample = start_sample(bc);
+    if (sample != NULL) {
+        sample->rtt_sample_us = rtt_ms_to_us(loss->rtt.latest);
+        sample->smoothed_rtt_us = (uint64_t)(loss->rtt.smoothed * 1000);
+        sample->bytes_acked = bytes;
+        sample->delivered_since_sent = delivered_since_sent;
+        sample->lost_since_sent = lost_since_sent;
+        sample->inflight_prior = inflight_prior;
+    }
+    notify(bc, cc, picoquic_congestion_notification_acknowledgement, QUICLY_CC_BBR_NOTIFY_ACK, &as, is_app_limited, now_us, now,
+           sample);
 }
 
 static void bbr_on_lost(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes, uint64_t lost_pn, uint64_t next_pn, double now,
@@ -351,7 +484,14 @@ static void bbr_on_lost(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t byt
     as.inflight_prior = bbr_params->inflight_prior;
     as.is_app_limited = bbr_params->app_limited;
 
-    notify(bc, cc, picoquic_congestion_notification_repeat, QUICLY_CC_BBR_NOTIFY_REPEAT, &as, now_us, now);
+    quicly_cc_bbr_sample_t *sample = start_sample(bc);
+    if (sample != NULL) {
+        sample->bytes_lost = bytes;
+        sample->delivered_since_sent = bbr_params->delivered_since_sent;
+        sample->lost_since_sent = bbr_params->lost_since_sent;
+        sample->inflight_prior = bbr_params->inflight_prior;
+    }
+    notify(bc, cc, picoquic_congestion_notification_repeat, QUICLY_CC_BBR_NOTIFY_REPEAT, &as, 0, now_us, now, sample);
 }
 
 static void bbr_on_sent(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes, uint64_t next_pn, double now, int app_limited)
@@ -373,7 +513,11 @@ static void bbr_on_sent(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t byt
     as.inflight_prior = inflight_prior;
     as.is_app_limited = 1;
 
-    notify(bc, cc, picoquic_congestion_notification_restart_from_idle, QUICLY_CC_BBR_NOTIFY_RESTART_FROM_IDLE, &as, now_us, now);
+    quicly_cc_bbr_sample_t *sample = start_sample(bc);
+    if (sample != NULL)
+        sample->inflight_prior = inflight_prior;
+    notify(bc, cc, picoquic_congestion_notification_restart_from_idle, QUICLY_CC_BBR_NOTIFY_RESTART_FROM_IDLE, &as, 1, now_us, now,
+           sample);
 }
 
 static void bbr_reset(quicly_cc_t *cc, uint32_t initcwnd, const quicly_cc_conf_t *conf, double now)
@@ -446,6 +590,13 @@ const char *quicly_cc_bbr_state_name(unsigned state)
                                   "probe_bw_up", "probe_rtt", "startup_long_rtt", "startup_resume"};
 
     return state < QUICLY_CC_BBR_NUM_STATES ? names[state] : "invalid";
+}
+
+static const char *quicly_cc_bbr_notification_name(unsigned notification)
+{
+    static const char *names[] = {"ack", "repeat", "restart_from_idle"};
+
+    return notification < QUICLY_CC_BBR_NUM_NOTIFICATIONS ? names[notification] : "invalid";
 }
 
 /* ---- vtable ---------------------------------------------------------------------------------- */
