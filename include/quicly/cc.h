@@ -435,9 +435,10 @@ struct st_quicly_cc_type_t {
      * Called when a packet is detected as lost.
      * @param bytes    bytes declared lost, or zero iff ECN_CE is observed
      * @param next_pn  the next unsent packet number, used for setting the recovery window
+     * @param bbr_params  the lost packet's snapshots, for BBR; NULL when ECN_CE is observed
      */
     void (*cc_on_lost)(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes, uint64_t lost_pn, uint64_t next_pn, double now,
-                       uint32_t max_udp_payload_size);
+                       uint32_t max_udp_payload_size, const quicly_cc_bbr_loss_params_t *bbr_params);
     /**
      * Called after a packet is sent.
      */

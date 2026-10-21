@@ -4763,12 +4763,24 @@ static quicly_error_t mark_frames_on_pto(quicly_conn_t *conn, uint8_t ack_epoch,
     return 0;
 }
 
-static void notify_congestion_to_cc(quicly_conn_t *conn, uint16_t lost_bytes, uint64_t lost_pn)
+static void notify_congestion_to_cc(quicly_conn_t *conn, uint16_t lost_bytes, uint64_t lost_pn,
+                                    const quicly_sent_packet_t *lost_packet)
 {
     if (conn->egress.pn_path_start <= lost_pn) {
         conn->egress.delivery.lost += lost_bytes;
+        quicly_cc_bbr_loss_params_t bbr_params;
+        quicly_cc_bbr_loss_params_t *bbr_params_ptr = NULL;
+        if (lost_packet != NULL) {
+            /* the lost counter already includes this packet */
+            bbr_params = (quicly_cc_bbr_loss_params_t){
+                .delivered_since_sent = delivered_since_sent(conn, lost_packet),
+                .inflight_prior = lost_packet->inflight_prior,
+                .lost_since_sent = lost_since_sent(conn, lost_packet),
+            };
+            bbr_params_ptr = &bbr_params;
+        }
         conn->egress.cc.type->cc_on_lost(&conn->egress.cc, &conn->egress.loss, lost_bytes, lost_pn, conn->egress.packet_number,
-                                         conn->stash.now_double, conn->egress.max_udp_payload_size);
+                                         conn->stash.now_double, conn->egress.max_udp_payload_size, bbr_params_ptr);
         QUICLY_PROBE(CC_CONGESTION, conn, conn->stash.now, lost_pn + 1, conn->egress.loss.sentmap.bytes_in_flight,
                      conn->egress.cc.cwnd);
         QUICLY_LOG_CONN(cc_congestion, conn, {
@@ -4794,7 +4806,7 @@ static void on_loss_detected(quicly_loss_t *loss, const quicly_sent_packet_t *lo
         PTLS_LOG_ELEMENT_NUMBER(pn, lost_packet->packet_number);
         PTLS_LOG_ELEMENT_NUMBER(packet_type, lost_packet->ack_epoch);
     });
-    notify_congestion_to_cc(conn, lost_packet->cc_bytes_in_flight, lost_packet->packet_number);
+    notify_congestion_to_cc(conn, lost_packet->cc_bytes_in_flight, lost_packet->packet_number, lost_packet);
     QUICLY_PROBE(QUICTRACE_CC_LOST, conn, conn->stash.now, &conn->egress.loss.rtt, conn->egress.cc.cwnd,
                  conn->egress.loss.sentmap.bytes_in_flight);
 }
@@ -6573,7 +6585,7 @@ static quicly_error_t handle_ack_frame(quicly_conn_t *conn, struct st_quicly_han
             QUICLY_PROBE(ECN_CONGESTION, conn, conn->stash.now, conn->super.stats.num_packets.acked_ecn_counts[2]);
             QUICLY_LOG_CONN(ecn_congestion, conn,
                             { PTLS_LOG_ELEMENT_NUMBER(ce_count, conn->super.stats.num_packets.acked_ecn_counts[2]); });
-            notify_congestion_to_cc(conn, 0, largest_newly_acked.pn);
+            notify_congestion_to_cc(conn, 0, largest_newly_acked.pn, NULL);
         }
     }
 

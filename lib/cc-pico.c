@@ -658,7 +658,7 @@ Cleanup:
 }
 
 static void pico_on_lost(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes, uint64_t lost_pn, uint64_t next_pn, double now,
-                         uint32_t max_udp_payload_size)
+                         uint32_t max_udp_payload_size, const quicly_cc_bbr_loss_params_t *bbr_params)
 {
     quicly_cc__update_ecn_episodes(cc, bytes, lost_pn);
 

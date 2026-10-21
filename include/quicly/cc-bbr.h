@@ -33,6 +33,24 @@ typedef struct st_quicly_cc_bbr_ack_params_t {
     uint64_t lost_since_sent;
 } quicly_cc_bbr_ack_params_t;
 
+/**
+ * Per-loss inputs that only BBR consumes in cc_on_lost, from the lost packet's send-time snapshots.
+ */
+typedef struct st_quicly_cc_bbr_loss_params_t {
+    /**
+     * Bytes delivered while the lost packet was in flight.
+     */
+    uint64_t delivered_since_sent;
+    /**
+     * Bytes in flight as of when the lost packet was sent.
+     */
+    uint64_t inflight_prior;
+    /**
+     * Bytes lost while the lost packet was in flight, including the packet itself.
+     */
+    uint64_t lost_since_sent;
+} quicly_cc_bbr_loss_params_t;
+
 #ifdef __cplusplus
 }
 #endif

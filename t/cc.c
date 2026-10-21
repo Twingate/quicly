@@ -41,7 +41,7 @@ static void test_pico_undo_loss(void)
     quicly_cc_pico_init.cb(&quicly_cc_pico_init, &cc, TEST_CC_CONF(initcwnd / mtu, 0, 0, 0), mtu, 0);
     uint32_t bytes_per_mtu_increase = cc.state.pico.bytes_per_mtu_increase;
 
-    cc.type->cc_on_lost(&cc, &loss, mtu, 10, 20, 1000, mtu);
+    cc.type->cc_on_lost(&cc, &loss, mtu, 10, 20, 1000, mtu, NULL);
     ok(cc.recovery_end == 20);
     ok(cc.num_loss_episodes == 1);
     ok(cc.state.pico.undo.num_packets_lost == 1);
@@ -71,9 +71,9 @@ static void test_pico_undo_multiple_losses(void)
 
     quicly_cc_pico_init.cb(&quicly_cc_pico_init, &cc, TEST_CC_CONF(initcwnd / mtu, 0, 0, 0), mtu, 0);
 
-    cc.type->cc_on_lost(&cc, &loss, mtu, 10, 20, 1000, mtu);
+    cc.type->cc_on_lost(&cc, &loss, mtu, 10, 20, 1000, mtu, NULL);
     uint32_t reduced_cwnd = cc.cwnd;
-    cc.type->cc_on_lost(&cc, &loss, mtu, 11, 20, 1001, mtu);
+    cc.type->cc_on_lost(&cc, &loss, mtu, 11, 20, 1001, mtu, NULL);
     ok(cc.state.pico.undo.num_packets_lost == 2);
 
     cc.type->cc_on_late_ack(&cc, 9, 1099);
@@ -105,7 +105,7 @@ static void test_pico_undo_rapid_start_loss(void)
     quicly_cc_pico_init.cb(&quicly_cc_pico_init, &cc, TEST_CC_CONF(initcwnd / mtu, 0, 0, 1), mtu, 900);
     ok(quicly_cc_rapid_start_is_active(&cc.rapid_start));
 
-    cc.type->cc_on_lost(&cc, &loss, mtu, 10, 20, 1000, mtu);
+    cc.type->cc_on_lost(&cc, &loss, mtu, 10, 20, 1000, mtu, NULL);
     ok(cc.rapid_start.state == QUICLY_CC_RAPID_START_STATE_RECOVERY);
 
     cc.type->cc_on_late_ack(&cc, 10, 1100);
@@ -114,7 +114,7 @@ static void test_pico_undo_rapid_start_loss(void)
     ok(cc.cwnd == initcwnd);
     ok(cc.ssthresh == UINT32_MAX);
 
-    cc.type->cc_on_lost(&cc, &loss, mtu, 20, 30, 1200, mtu);
+    cc.type->cc_on_lost(&cc, &loss, mtu, 20, 30, 1200, mtu, NULL);
     ok(cc.cwnd == initcwnd / 2);
     ok(cc.ssthresh == cc.cwnd);
 }
@@ -130,7 +130,7 @@ static void test_pico_undo_jumpstart_loss(void)
     ok(quicly_cc_in_jumpstart(&cc));
     ok(cc.cwnd == jumpcwnd);
 
-    cc.type->cc_on_lost(&cc, &loss, mtu, 10, 20, 1000, mtu);
+    cc.type->cc_on_lost(&cc, &loss, mtu, 10, 20, 1000, mtu, NULL);
     ok(cc.state.pico.undo.cwnd == jumpcwnd / 2);
     ok(cc.cwnd < jumpcwnd);
     ok(!quicly_cc_in_jumpstart(&cc));
@@ -183,13 +183,13 @@ static void test_pico_ecn(void)
     quicly_cc_pico_init.cb(&quicly_cc_pico_init, &cc, TEST_CC_CONF(initcwnd / mtu, 0, 0, 0), mtu, 0);
 
     /* exit slow start by observing a packet loss */
-    cc.type->cc_on_lost(&cc, &loss, mtu, 10, 20, 1000, mtu);
+    cc.type->cc_on_lost(&cc, &loss, mtu, 10, 20, 1000, mtu, NULL);
     ok(cc.cwnd == initcwnd / 2);
     ok(cc.num_ecn_loss_episodes == 0);
     uint32_t cwnd_in_ca = cc.cwnd;
 
     /* a CE mark (i.e., zero-byte congestion report) reduces CWND by QUICLY_BETA_ECN rather than by QUICLY_BETA_LOSS */
-    cc.type->cc_on_lost(&cc, &loss, 0, 20, 30, 1100, mtu);
+    cc.type->cc_on_lost(&cc, &loss, 0, 20, 30, 1100, mtu, NULL);
     ok(cc.num_loss_episodes == 2);
     ok(cc.num_ecn_loss_episodes == 1);
     ok(cwnd_is(cc.cwnd, cwnd_in_ca * QUICLY_BETA_ECN));
@@ -200,7 +200,7 @@ static void test_pico_ecn(void)
 
     /* a packet loss reduces CWND by QUICLY_BETA_LOSS */
     uint32_t cwnd_before_loss = cc.cwnd;
-    cc.type->cc_on_lost(&cc, &loss, mtu, 30, 40, 1200, mtu);
+    cc.type->cc_on_lost(&cc, &loss, mtu, 30, 40, 1200, mtu, NULL);
     ok(cc.num_ecn_loss_episodes == 1);
     ok(cwnd_is(cc.cwnd, cwnd_before_loss * QUICLY_BETA_LOSS));
 }
@@ -214,7 +214,7 @@ static void test_pico_ecn_rapid_start(void)
     quicly_cc_pico_init.cb(&quicly_cc_pico_init, &cc, TEST_CC_CONF(initcwnd / mtu, 0, 0, 1), mtu, 900);
 
     /* upon a CE mark, the silence factor derived from QUICLY_BETA_ECN (i.e., 0.95x) is applied */
-    cc.type->cc_on_lost(&cc, &loss, 0, 10, 20, 1000, mtu);
+    cc.type->cc_on_lost(&cc, &loss, 0, 10, 20, 1000, mtu, NULL);
     ok(cc.rapid_start.state == QUICLY_CC_RAPID_START_STATE_RECOVERY);
     ok(cc.rapid_start.by_ecn);
     ok(cwnd_is(cc.cwnd, initcwnd * QUICLY_RAPID_START_LOSS_FACTOR(QUICLY_BETA_ECN)));
@@ -227,7 +227,7 @@ static void test_pico_ecn_rapid_start(void)
 
     /* a packet loss detected within the same recovery period is accounted using loss_factor (0.95x), the factor being retained
      * from when the recovery period was entered, even though the episode is no longer counted as an ECN-only one */
-    cc.type->cc_on_lost(&cc, &loss, mtu, 16, 20, 1100, mtu);
+    cc.type->cc_on_lost(&cc, &loss, mtu, 16, 20, 1100, mtu, NULL);
     ok(cc.num_loss_episodes == 1);
     ok(cc.num_ecn_loss_episodes == 0);
     ok(cwnd_is(cc.cwnd, cwnd_after_ack - QUICLY_RAPID_START_LOSS_FACTOR(QUICLY_BETA_ECN) * mtu));
@@ -241,20 +241,20 @@ static void test_cubic_fast_convergence(void)
 
     quicly_cc_cubic_init.cb(&quicly_cc_cubic_init, &cc, TEST_CC_CONF(initcwnd / mtu, 0, 0, 0), mtu, 0);
 
-    cc.type->cc_on_lost(&cc, &loss, mtu, 10, 20, 1000, mtu);
+    cc.type->cc_on_lost(&cc, &loss, mtu, 10, 20, 1000, mtu, NULL);
     ok(!cc.state.pico.cubic.fast_convergence);
     ok(cc.state.pico.cubic.cwnd_prior == 50 * mtu);
     ok(cc.state.pico.cubic.w_est == 0);
 
     cc.cwnd = 45 * mtu;
-    cc.type->cc_on_lost(&cc, &loss, mtu, 20, 30, 1100, mtu);
+    cc.type->cc_on_lost(&cc, &loss, mtu, 20, 30, 1100, mtu, NULL);
     ok(cc.state.pico.cubic.fast_convergence);
     ok((cc.state.pico.cubic.cwnd_prior + cc.ssthresh) / 2 == 45 * mtu * 85 / 100);
     ok(cc.state.pico.cubic.w_est == 0);
 
     /* The effective W_max is 38.25 MTUs, so a 40-MTU congestion window does not trigger fast convergence again. */
     cc.cwnd = 40 * mtu;
-    cc.type->cc_on_lost(&cc, &loss, mtu, 30, 40, 1200, mtu);
+    cc.type->cc_on_lost(&cc, &loss, mtu, 30, 40, 1200, mtu, NULL);
     ok(!cc.state.pico.cubic.fast_convergence);
     ok(cc.state.pico.cubic.cwnd_prior == 40 * mtu);
     ok(cc.state.pico.cubic.w_est == 0);
@@ -393,7 +393,7 @@ static void test_cubic_recovery_epoch(void)
 
     /* RFC 9438 starts the epoch when congestion avoidance begins, not when congestion is detected. */
     quicly_cc_cubic_init.cb(&quicly_cc_cubic_init, &cc, TEST_CC_CONF(initcwnd / mtu, 0, 0, 0), mtu, 0);
-    cc.type->cc_on_lost(&cc, &loss, mtu, 10, 20, 1000, mtu);
+    cc.type->cc_on_lost(&cc, &loss, mtu, 10, 20, 1000, mtu, NULL);
     ok(cc.state.pico.cubic.w_est == 0);
     ok(cc.state.pico.cubic.epoch_start == 0);
     cc.type->cc_on_acked(&cc, &loss, 0, 19, 0, 1, 20, 1100, mtu, NULL);
@@ -404,7 +404,7 @@ static void test_cubic_recovery_epoch(void)
 
     /* If recovery exits while app-limited, initialize W_est but defer the wall-clock epoch until sending resumes. */
     quicly_cc_cubic_init.cb(&quicly_cc_cubic_init, &cc, TEST_CC_CONF(initcwnd / mtu, 0, 0, 0), mtu, 0);
-    cc.type->cc_on_lost(&cc, &loss, mtu, 10, 20, 1000, mtu);
+    cc.type->cc_on_lost(&cc, &loss, mtu, 10, 20, 1000, mtu, NULL);
     cc.type->cc_update_cc_limited(&cc, 0, 1050);
     cc.type->cc_on_acked(&cc, &loss, 0, 20, 0, 0, 21, 1200, mtu, NULL);
     ok(cc.state.pico.cubic.w_est == cc.cwnd);
@@ -420,7 +420,7 @@ static void test_cubic_rapid_start_epoch(void)
     uint32_t mtu = 1200, initcwnd = 10 * mtu;
 
     quicly_cc_cubic_init.cb(&quicly_cc_cubic_init, &cc, TEST_CC_CONF(initcwnd / mtu, 0, 0, 1), mtu, 900);
-    cc.type->cc_on_lost(&cc, &loss, mtu, 10, 20, 1000, mtu);
+    cc.type->cc_on_lost(&cc, &loss, mtu, 10, 20, 1000, mtu, NULL);
     ok(cc.state.pico.cubic.cwnd_prior != 0);
     ok(!cc.state.pico.cubic.fast_convergence);
     ok(cc.state.pico.cubic.w_est == 0);
@@ -434,7 +434,7 @@ static void test_cubic_rapid_start_epoch(void)
     ok(isnan(cc.state.pico.cubic.k));
 
     /* Further reduction during recovery does not initialize or restart the epoch. */
-    cc.type->cc_on_lost(&cc, &loss, mtu, 16, 20, 1150, mtu);
+    cc.type->cc_on_lost(&cc, &loss, mtu, 16, 20, 1150, mtu, NULL);
     ok(cc.state.pico.cubic.w_est == 0);
     ok(cc.state.pico.cubic.epoch_start == 0);
     ok(isnan(cc.state.pico.cubic.k));
@@ -454,7 +454,7 @@ static void test_cubic_rapid_start_epoch(void)
     /* Losses from the completed recovery no longer revise CWND or the initialized Cubic epoch. */
     uint32_t cwnd_after_recovery = cc.cwnd, ssthresh_after_recovery = cc.ssthresh;
     struct st_quicly_cc_cubic_t cubic_after_recovery = cc.state.pico.cubic;
-    cc.type->cc_on_lost(&cc, &loss, mtu, 19, 21, 1250, mtu);
+    cc.type->cc_on_lost(&cc, &loss, mtu, 19, 21, 1250, mtu, NULL);
     ok(cc.cwnd == cwnd_after_recovery);
     ok(cc.ssthresh == ssthresh_after_recovery);
     ok(memcmp(&cc.state.pico.cubic, &cubic_after_recovery, sizeof(cubic_after_recovery)) == 0);
@@ -469,13 +469,13 @@ static void test_cubic_abe(void)
     quicly_cc_cubic_init.cb(&quicly_cc_cubic_init, &cc, TEST_CC_CONF(initcwnd / mtu, 0, 0, 0), mtu, 0);
 
     /* Establish a 50-MTU W_max when leaving ordinary slow start. */
-    cc.type->cc_on_lost(&cc, &loss, mtu, 10, 20, 1000, mtu);
+    cc.type->cc_on_lost(&cc, &loss, mtu, 10, 20, 1000, mtu, NULL);
     ok(!cc.state.pico.cubic.fast_convergence);
     ok(cc.state.pico.cubic.cwnd_prior == 50 * mtu);
 
     /* An ECN event below W_max reduces by 0.85 and applies FC using (1 + 0.85) / 2, i.e. 0.925. */
     cc.cwnd = 45 * mtu;
-    cc.type->cc_on_lost(&cc, &loss, 0, 20, 30, 1100, mtu);
+    cc.type->cc_on_lost(&cc, &loss, 0, 20, 30, 1100, mtu, NULL);
     ok(cc.state.pico.cubic.by_ecn);
     ok(cc.cwnd == (uint32_t)(45 * mtu * QUICLY_BETA_ECN));
     ok(cc.state.pico.cubic.fast_convergence);
@@ -498,7 +498,7 @@ static void test_cubic_undo_loss(void)
     uint32_t mtu = 1200, initcwnd = 10 * mtu;
 
     quicly_cc_cubic_init.cb(&quicly_cc_cubic_init, &cc, TEST_CC_CONF(initcwnd / mtu, 0, 0, 0), mtu, 0);
-    cc.type->cc_on_lost(&cc, &loss, mtu, 10, 20, 1000, mtu);
+    cc.type->cc_on_lost(&cc, &loss, mtu, 10, 20, 1000, mtu, NULL);
     ok(cc.state.pico.cubic.cwnd_prior != 0);
 
     cc.type->cc_on_late_ack(&cc, 10, 1100);
@@ -595,10 +595,10 @@ static void test_reno(void)
 
     /* Startup uses the shared 0.5 reduction; subsequent loss uses the policy beta. */
     quicly_cc_reno_init.cb(&quicly_cc_reno_init, &cc, TEST_CC_CONF(initcwnd / mtu, 0, 0, 0), mtu, 0);
-    cc.type->cc_on_lost(&cc, &loss, mtu, 10, 20, 1000, mtu);
+    cc.type->cc_on_lost(&cc, &loss, mtu, 10, 20, 1000, mtu, NULL);
     ok(cc.cwnd == initcwnd / 2);
     cc.cwnd = 40 * mtu;
-    cc.type->cc_on_lost(&cc, &loss, mtu, 20, 30, 1100, mtu);
+    cc.type->cc_on_lost(&cc, &loss, mtu, 20, 30, 1100, mtu, NULL);
     ok(cwnd_is(cc.cwnd, 40 * mtu * QUICLY_BETA_RENO));
     ok(cc.state.pico.bytes_to_mtu_increase == 0);
     cc.type->cc_on_acked(&cc, &loss, mtu, 30, mtu, 1, 31, 1200, mtu, NULL);
@@ -606,9 +606,9 @@ static void test_reno(void)
 
     /* Reno uses the same beta for ECN and packet loss. */
     quicly_cc_reno_init.cb(&quicly_cc_reno_init, &cc, TEST_CC_CONF(initcwnd / mtu, 0, 0, 0), mtu, 0);
-    cc.type->cc_on_lost(&cc, &loss, mtu, 10, 20, 1000, mtu);
+    cc.type->cc_on_lost(&cc, &loss, mtu, 10, 20, 1000, mtu, NULL);
     cc.cwnd = 40 * mtu;
-    cc.type->cc_on_lost(&cc, &loss, 0, 20, 30, 1100, mtu);
+    cc.type->cc_on_lost(&cc, &loss, 0, 20, 30, 1100, mtu, NULL);
     ok(cwnd_is(cc.cwnd, 40 * mtu * QUICLY_BETA_RENO));
 }
 
@@ -732,13 +732,13 @@ static void test_cuback_deferred_bdp_estimate(void)
 
     /* An ordinary first loss retains the estimated BDP as W_max, matching HEAD's special 0.5 startup reduction. */
     quicly_cc_cuback_init.cb(&quicly_cc_cuback_init, &cc, TEST_CC_CONF(initcwnd / mtu, 0, 0, 0), mtu, 0);
-    cc.type->cc_on_lost(&cc, &loss, mtu, 10, 20, 1000, mtu);
+    cc.type->cc_on_lost(&cc, &loss, mtu, 10, 20, 1000, mtu, NULL);
     ok(cc.state.pico.cuback.cwnd_prior == initcwnd / 2);
 
     /* Rapid Start continues adjusting CWND throughout recovery, so W_max is derived from the final CWND afterward, using twice
      * the BDP estimate. */
     quicly_cc_cuback_init.cb(&quicly_cc_cuback_init, &cc, TEST_CC_CONF(initcwnd / mtu, 0, 0, 1), mtu, 900);
-    cc.type->cc_on_lost(&cc, &loss, mtu, 10, 20, 1000, mtu);
+    cc.type->cc_on_lost(&cc, &loss, mtu, 10, 20, 1000, mtu, NULL);
     ok(cc.state.pico.cuback.bandwidth > 0);
     ok(cc.state.pico.cuback.cwnd_prior == 0);
     ok(cc.state.pico.bytes_to_mtu_increase == 0);
@@ -753,7 +753,7 @@ static void test_cuback_deferred_bdp_estimate(void)
     cwnd_after_recovery = cc.cwnd;
     uint32_t ssthresh_after_recovery = cc.ssthresh;
     struct st_quicly_cc_cuback_t cuback_after_recovery = cc.state.pico.cuback;
-    cc.type->cc_on_lost(&cc, &loss, mtu, 19, 21, 1150, mtu);
+    cc.type->cc_on_lost(&cc, &loss, mtu, 19, 21, 1150, mtu, NULL);
     ok(cc.cwnd == cwnd_after_recovery);
     ok(cc.ssthresh == ssthresh_after_recovery);
     ok(memcmp(&cc.state.pico.cuback, &cuback_after_recovery, sizeof(cuback_after_recovery)) == 0);
@@ -773,12 +773,12 @@ static void test_zero_byte_ack_exits_rapid_start_recovery(void)
             quicly_cc_t cc;
             policies[i]->cb(policies[i], &cc, TEST_CC_CONF(initcwnd / mtu, 0, 0, 1), mtu, 900);
 
-            cc.type->cc_on_lost(&cc, &loss, mtu, 10, 20, 1000, mtu);
+            cc.type->cc_on_lost(&cc, &loss, mtu, 10, 20, 1000, mtu, NULL);
             ok(quicly_cc_rapid_start_is_in_first_recovery(&cc.rapid_start));
 
             /* A subsequent packet-loss or ECN episode can be detected from an ACK carrying no congestion-controlled bytes. The
              * loss callback finalizes Rapid Start before processing that episode. */
-            cc.type->cc_on_lost(&cc, &loss, second_by_ecn ? 0 : mtu, 20, 30, 1200, mtu);
+            cc.type->cc_on_lost(&cc, &loss, second_by_ecn ? 0 : mtu, 20, 30, 1200, mtu, NULL);
             ok(!quicly_cc_rapid_start_is_active(&cc.rapid_start));
             ok(cc.num_loss_episodes == 2);
             ok((policies[i] == &quicly_cc_cuback_init ? cc.state.pico.cuback.by_ecn : cc.state.pico.cubic.by_ecn) == second_by_ecn);
@@ -1229,11 +1229,11 @@ static void test_abba_gain_cap_policy(quicly_init_cc_t *init)
             quicly_cc_t cc;
             quicly_loss_t loss = {.rtt = {.latest = 8, .smoothed = 8, .minimum = 8}};
             init->cb(init, &cc, TEST_CC_CONF(120000 / mtu, 0, 1, 0), mtu, 0);
-            cc.type->cc_on_lost(&cc, &loss, mtu, 10, 20, 1000, mtu);
+            cc.type->cc_on_lost(&cc, &loss, mtu, 10, 20, 1000, mtu, NULL);
             cc.type->cc_on_acked(&cc, &loss, 0, 20, 0, 1, 21, 1100, mtu, NULL);
             /* A subsequent congestion event records the policy's prior window and loss/ECN beta. */
             cc.cwnd = prior;
-            cc.type->cc_on_lost(&cc, &loss, by_ecn ? 0 : mtu, 30, 40, 1200, mtu);
+            cc.type->cc_on_lost(&cc, &loss, by_ecn ? 0 : mtu, 30, 40, 1200, mtu, NULL);
             cc.type->cc_on_acked(&cc, &loss, 0, 40, 0, 1, 41, 1300, mtu, NULL);
             cc.cwnd = cwnd;
             cc.state.pico.abba.a = 1.f / 1024;
@@ -1324,8 +1324,8 @@ static void test_abba_lifecycle(quicly_init_cc_t *init)
     control.type->cc_on_acked(&control, &loss, mtu, 9, mtu, 1, 10, 900, mtu, NULL);
     ok(cc.cwnd == control.cwnd);
     uint32_t peak = cc.cwnd;
-    cc.type->cc_on_lost(&cc, &loss, mtu, 10, 20, 1000, mtu);
-    control.type->cc_on_lost(&control, &loss, mtu, 10, 20, 1000, mtu);
+    cc.type->cc_on_lost(&cc, &loss, mtu, 10, 20, 1000, mtu, NULL);
+    control.type->cc_on_lost(&control, &loss, mtu, 10, 20, 1000, mtu, NULL);
     ok(cc.cwnd == control.cwnd && cc.ssthresh == control.ssthresh);
     ok(cc.state.pico.abba.high.cwnd == peak);
     ok((cc.type == &quicly_cc_type_cubic ? cc.state.pico.cubic.cwnd_prior : cc.state.pico.cuback.cwnd_prior) == peak / 2);
@@ -1371,13 +1371,13 @@ static void test_abba_lifecycle(quicly_init_cc_t *init)
     struct st_quicly_cc_abba_t saved = cc.state.pico.abba;
     loss.rtt.latest = 80;
     loss.rtt.smoothed = 115;
-    cc.type->cc_on_lost(&cc, &loss, mtu, 24, 30, 1400, mtu);
+    cc.type->cc_on_lost(&cc, &loss, mtu, 24, 30, 1400, mtu, NULL);
     ok(cc.cwnd == (uint32_t)(before * QUICLY_BETA_LOSS));
     ok(cc.state.pico.abba.high.cwnd == before);
     ok(cc.state.pico.abba.high.rtt == 80);
     ok(cc.state.pico.abba.a == 0 && isnan(cc.state.pico.abba.b));
     ok(cc.state.pico.abba.increase_remainder == 0);
-    cc.type->cc_on_lost(&cc, &loss, mtu, 25, 30, 1401, mtu);
+    cc.type->cc_on_lost(&cc, &loss, mtu, 25, 30, 1401, mtu, NULL);
     cc.type->cc_on_late_ack(&cc, 24, 1450);
     ok(cc.cwnd < before);
     cc.type->cc_on_late_ack(&cc, 25, 1451);
@@ -1387,13 +1387,13 @@ static void test_abba_lifecycle(quicly_init_cc_t *init)
     /* ECN uses its own beta and cannot be undone by a late ACK. */
     quicly_rtt_init(&loss.rtt, &quicly_spec_context.egress[0].loss, 115);
     quicly_rtt_update(&loss.rtt, 80, 0, 1500);
-    cc.type->cc_on_lost(&cc, &loss, 0, 30, 40, 1500, mtu);
+    cc.type->cc_on_lost(&cc, &loss, 0, 30, 40, 1500, mtu, NULL);
     ok(cc.cwnd == (uint32_t)(before * QUICLY_BETA_ECN));
     cc.type->cc_on_late_ack(&cc, 30, 1550);
     ok(cc.cwnd == (uint32_t)(before * QUICLY_BETA_ECN));
     /* A new loss can arrive beyond recovery without an intervening ACK. */
     before = cc.cwnd;
-    cc.type->cc_on_lost(&cc, &loss, mtu, 40, 50, 1600, mtu);
+    cc.type->cc_on_lost(&cc, &loss, mtu, 40, 50, 1600, mtu, NULL);
     ok(cc.state.pico.abba.high.cwnd == before);
     cc.type->cc_on_acked(&cc, &loss, 0, 50, 0, 1, 51, 1700, mtu, NULL);
     ok(cc.state.pico.abba.low.cwnd == cc.cwnd);
@@ -1414,14 +1414,14 @@ static void test_abba_ecn_floor(quicly_init_cc_t *init)
             }
 
             /* CE captures a floor of 80, distinct from latest (120) and SRTT (85), or the initial estimate without samples. */
-            cc.type->cc_on_lost(&cc, &loss, 0, 10, 20, 1000, mtu);
+            cc.type->cc_on_lost(&cc, &loss, 0, 10, 20, 1000, mtu, NULL);
             ok(cc.cwnd == initcwnd / 2);
             quicly_rtt_update(&loss.rtt, 60, 0, 1050);
             cc.type->cc_on_acked(&cc, &loss, mtu, 19, mtu, 1, 20, 1050, mtu, NULL);
 
             if (undo_loss) {
                 /* Undoing a later packet loss must restore the fixed CE watermark. */
-                cc.type->cc_on_lost(&cc, &loss, mtu, 20, 30, 1060, mtu);
+                cc.type->cc_on_lost(&cc, &loss, mtu, 20, 30, 1060, mtu, NULL);
                 quicly_rtt_update(&loss.rtt, 50, 0, 1070);
                 cc.type->cc_on_acked(&cc, &loss, mtu, 29, mtu, 1, 30, 1070, mtu, NULL);
                 cc.type->cc_on_late_ack(&cc, 20, 1080);
@@ -1449,7 +1449,7 @@ static void test_abba_ecn_floor(quicly_init_cc_t *init)
             /* A subsequent packet-loss event must resume tracking recovery minima. With a recovery minimum of 45
              * and exit RTT of 50, the model is horizontal, so growth at RTT 55 must match the unaccelerated policy. */
             uint32_t peak = cc.cwnd;
-            cc.type->cc_on_lost(&cc, &loss, mtu, 41, 50, 1200, mtu);
+            cc.type->cc_on_lost(&cc, &loss, mtu, 41, 50, 1200, mtu, NULL);
             quicly_rtt_update(&loss.rtt, 45, 0, 1250);
             cc.type->cc_on_acked(&cc, &loss, mtu, 49, mtu, 1, 50, 1250, mtu, NULL);
             quicly_rtt_update(&loss.rtt, 50, 0, 1300);
@@ -1471,7 +1471,7 @@ static void test_abba_ack_accounting(quicly_init_cc_t *init)
     quicly_loss_t loss = {.rtt = {.latest = 8, .smoothed = 8, .minimum = 8}};
     uint32_t mtu = 1200, initcwnd = 100 * mtu;
     init->cb(init, &cc, TEST_CC_CONF(initcwnd / mtu, 1, 1, 0), mtu, 0);
-    cc.type->cc_on_lost(&cc, &loss, mtu, 10, 20, 1000, mtu);
+    cc.type->cc_on_lost(&cc, &loss, mtu, 10, 20, 1000, mtu, NULL);
     cc.type->cc_on_acked(&cc, &loss, 0, 20, 0, 1, 21, 1100, mtu, NULL);
     /* Above the gain-cap threshold, isolate fractional-byte accounting with a gain of three fifths per byte ACKed. */
     cc.cwnd = initcwnd;
@@ -1492,7 +1492,7 @@ static void test_abba_ack_accounting(quicly_init_cc_t *init)
     }
     loss.rtt.latest = 100;
     loss.rtt.smoothed = 117.5;
-    cc.type->cc_on_lost(&cc, &loss, mtu, 30, 40, 1200, mtu);
+    cc.type->cc_on_lost(&cc, &loss, mtu, 30, 40, 1200, mtu, NULL);
     ok(cc.type == &quicly_cc_type_cubic ? cc.state.pico.cubic.fast_convergence : cc.state.pico.cuback.fast_convergence);
     ok(cc.state.pico.abba.high.cwnd == 100000);
     cc.type->cc_on_acked(&cc, &loss, 0, 40, 0, 1, 41, 1300, mtu, NULL);
@@ -1509,7 +1509,7 @@ static void test_abba_cuback_partial_credit(void)
         quicly_cc_t cc, control;
         quicly_loss_t loss = {.rtt = {.latest = 8, .smoothed = 8, .minimum = 8}};
         quicly_cc_cuback_init.cb(&quicly_cc_cuback_init, &cc, TEST_CC_CONF(initcwnd / mtu, 0, 1, 0), mtu, 0);
-        cc.type->cc_on_lost(&cc, &loss, mtu, 10, 20, 1000, mtu);
+        cc.type->cc_on_lost(&cc, &loss, mtu, 10, 20, 1000, mtu, NULL);
         cc.type->cc_on_acked(&cc, &loss, 0, 20, 0, 1, 21, 1100, mtu, NULL);
 
         /* Seed model acceleration independently of the Cuback interval under test. */
@@ -1538,7 +1538,7 @@ static void test_abba_cuback_partial_credit(void)
 
         /* A spurious loss must restore the same pending interval as well as the model. */
         remaining = cc.state.pico.bytes_to_mtu_increase;
-        cc.type->cc_on_lost(&cc, &loss, mtu, 30, 40, 1200, mtu);
+        cc.type->cc_on_lost(&cc, &loss, mtu, 30, 40, 1200, mtu, NULL);
         cc.type->cc_on_late_ack(&cc, 30, 1250);
         ok(cc.cwnd == before + mtu);
         ok(cc.state.pico.bytes_to_mtu_increase == remaining);
@@ -1557,8 +1557,8 @@ static void test_abba_startup_and_switch(quicly_init_cc_t *init)
             cc.type->cc_jumpstart(&cc, initcwnd * 2, 5);
             control.type->cc_jumpstart(&control, initcwnd * 2, 5);
         }
-        cc.type->cc_on_lost(&cc, &loss, mtu, 10, 20, 1000, mtu);
-        control.type->cc_on_lost(&control, &loss, mtu, 10, 20, 1000, mtu);
+        cc.type->cc_on_lost(&cc, &loss, mtu, 10, 20, 1000, mtu, NULL);
+        control.type->cc_on_lost(&control, &loss, mtu, 10, 20, 1000, mtu, NULL);
         cc.type->cc_on_acked(&cc, &loss, initcwnd, 19, initcwnd, 1, 20, 1050, mtu, NULL);
         control.type->cc_on_acked(&control, &loss, initcwnd, 19, initcwnd, 1, 20, 1050, mtu, NULL);
         ok(cc.cwnd == control.cwnd);
