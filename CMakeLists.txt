@@ -60,6 +60,8 @@ SET(PICOTLS_OPENSSL_FILES
 
 SET(QUICLY_LIBRARY_FILES
     lib/frame.c
+    lib/cc-bbr.c
+    lib/picoquic-bbr.c
     lib/cc-cubic.c
     lib/cc-pico.c
     lib/defaults.c
