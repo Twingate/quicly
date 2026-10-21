@@ -92,6 +92,10 @@ typedef struct st_quicly_cc_bbr_sample_t {
      */
     uint64_t cc_state;
     uint64_t bw;
+    /**
+     * the delivery rate measured for this ack, before BBR's filtering; 0 when not measured
+     */
+    uint64_t bw_estimate;
 } quicly_cc_bbr_sample_t;
 
 static const char *quicly_cc_bbr_notification_name(unsigned notification);
@@ -405,6 +409,7 @@ void quicly_cc_bbr_log(quicly_conn_t *conn, quicly_cc_t *cc)
         PTLS_LOG_ELEMENT_BOOL(packet_conservation, QUICLY_CC_BBR_OBSERVED_PACKET_CONSERVATION(s->cc_state));
         PTLS_LOG_ELEMENT_BOOL(idle_restart, QUICLY_CC_BBR_OBSERVED_IDLE_RESTART(s->cc_state));
         PTLS_LOG_ELEMENT_NUMBER(bw, s->bw);
+        PTLS_LOG_ELEMENT_NUMBER(bw_estimate, s->bw_estimate);
     });
 }
 
@@ -457,6 +462,7 @@ static void bbr_on_acked(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t by
         sample->bytes_acked = bytes;
         sample->delivered_since_sent = delivered_since_sent;
         sample->lost_since_sent = lost_since_sent;
+        sample->bw_estimate = bbr_params->bandwidth_estimate;
         sample->inflight_prior = inflight_prior;
     }
     notify(bc, cc, picoquic_congestion_notification_acknowledgement, QUICLY_CC_BBR_NOTIFY_ACK, &as, is_app_limited, now_us, now,
