@@ -859,7 +859,7 @@ static void pico_on_late_ack(quicly_cc_t *cc, uint64_t pn, double now)
     }
 }
 
-static void pico_on_sent(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes, double now)
+static void pico_on_sent(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes, uint64_t next_pn, double now, int app_limited)
 {
     /* Unused */
 }

@@ -65,6 +65,10 @@ typedef struct st_quicly_sent_packet_t {
      */
     uint8_t promoted_path : 1;
     /**
+     * if the sender was app-limited when the packet was sent
+     */
+    uint8_t app_limited : 1;
+    /**
      * number of bytes in-flight for the packet, from the context of CC (becomes zero when deemed lost, but not when PTO fires)
      */
     uint16_t cc_bytes_in_flight;
@@ -86,6 +90,7 @@ typedef struct st_quicly_sent_packet_t {
  * send-time state for rate-based CCs; quicly_sentmap_set_snapshot copies it into the packet
  */
 typedef struct st_quicly_sent_packet_snapshot_t {
+    int app_limited;
     uint64_t delivered_prior;
     uint64_t lost_prior;
 } quicly_sent_packet_snapshot_t;
@@ -330,6 +335,7 @@ inline void quicly_sentmap_set_snapshot(quicly_sentmap_t *map, const quicly_sent
 
     quicly_sent_packet_t *packet = &map->_pending_packet->data.packet;
     packet->inflight_prior = (uint32_t)map->bytes_in_flight;
+    packet->app_limited = snapshot->app_limited != 0;
     packet->delivered_prior = (uint32_t)snapshot->delivered_prior;
     packet->lost_prior = (uint32_t)snapshot->lost_prior;
 }

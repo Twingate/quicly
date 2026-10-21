@@ -156,7 +156,7 @@ static void cubic_on_lost(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t b
         cc->cwnd_minimum = cc->cwnd;
 }
 
-static void cubic_on_sent(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes, double now)
+static void cubic_on_sent(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes, uint64_t next_pn, double now, int app_limited)
 {
     /* Prevent extreme cwnd growth following an idle period caused by application limit.
      * This fixes the W_cubic/W_est calculations by effectively subtracting the idle period

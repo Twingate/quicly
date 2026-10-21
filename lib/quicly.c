@@ -4034,10 +4034,12 @@ static quicly_error_t commit_send_packet(quicly_conn_t *conn, quicly_send_contex
     } else {
         packet_bytes_in_flight = 0;
     }
+    int app_limited = !quicly_ratemeter_is_cc_limited(&conn->egress.ratemeter);
     if (quicly_sentmap_is_open(&conn->egress.loss.sentmap)) {
         int cc_limited = conn->egress.loss.sentmap.bytes_in_flight + packet_bytes_in_flight >=
                          conn->egress.cc.cwnd / 2; /* for the rationale behind this formula, see handle_ack_frame */
         quicly_sent_packet_snapshot_t snapshot = {
+            .app_limited = app_limited,
             .delivered_prior = conn->egress.delivery.delivered,
             .lost_prior = conn->egress.delivery.lost,
         };
@@ -4048,7 +4050,7 @@ static quicly_error_t commit_send_packet(quicly_conn_t *conn, quicly_send_contex
     if (packet_bytes_in_flight != 0) {
         assert(s->path_index == 0 && "CC governs path 0 and data is sent only on that path");
         conn->egress.cc.type->cc_on_sent(&conn->egress.cc, &conn->egress.loss, (uint32_t)packet_bytes_in_flight,
-                                         conn->stash.now_double);
+                                         conn->egress.packet_number + 1, conn->stash.now_double, app_limited);
         if (conn->egress.pacer != NULL)
             quicly_pacer_consume_window(conn->egress.pacer, packet_bytes_in_flight);
     }
@@ -4776,6 +4778,7 @@ static void notify_congestion_to_cc(quicly_conn_t *conn, uint16_t lost_bytes, ui
                 .delivered_since_sent = delivered_since_sent(conn, lost_packet),
                 .inflight_prior = lost_packet->inflight_prior,
                 .lost_since_sent = lost_since_sent(conn, lost_packet),
+                .app_limited = lost_packet->app_limited,
             };
             bbr_params_ptr = &bbr_params;
         }
@@ -6533,6 +6536,7 @@ static quicly_error_t handle_ack_frame(quicly_conn_t *conn, struct st_quicly_han
             .delivered_since_sent = delivered_since_sent(conn, &largest_cc_acked),
             .inflight_prior = largest_cc_acked.inflight_prior,
             .lost_since_sent = lost_since_sent(conn, &largest_cc_acked),
+            .app_limited = largest_cc_acked.app_limited,
         };
         conn->egress.cc.type->cc_on_acked(&conn->egress.cc, &conn->egress.loss, (uint32_t)bytes_acked, frame.largest_acknowledged,
                                           (uint32_t)(conn->egress.loss.sentmap.bytes_in_flight + bytes_acked), cc_limited,

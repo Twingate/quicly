@@ -45,9 +45,9 @@ static void test_jumpstart_pattern(quicly_init_cc_t *init, const struct test_jum
     for (const struct test_jumpstart_action *action = actions; action->action != TEST_JUMPSTART_ACTION_END; ++action) {
         switch (action->action) {
         case TEST_JUMPSTART_ACTION_SEND:
-            cc.type->cc_on_sent(&cc, &loss, action->packets * mtu, action->now);
-            packets_inflight += action->packets;
             next_pn += action->packets;
+            cc.type->cc_on_sent(&cc, &loss, action->packets * mtu, next_pn, action->now, 0);
+            packets_inflight += action->packets;
             break;
         case TEST_JUMPSTART_ACTION_ACKED:
             cc.type->cc_on_acked(&cc, &loss, action->packets * mtu, packets_acked + action->packets - 1, packets_inflight * mtu, 1,

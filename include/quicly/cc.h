@@ -441,8 +441,10 @@ struct st_quicly_cc_type_t {
                        uint32_t max_udp_payload_size, const quicly_cc_bbr_loss_params_t *bbr_params);
     /**
      * Called after a packet is sent.
+     * @param next_pn      the packet number after the one just sent
+     * @param app_limited  if the sender had nothing more to send when this packet went out
      */
-    void (*cc_on_sent)(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes, double now);
+    void (*cc_on_sent)(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes, uint64_t next_pn, double now, int app_limited);
     /**
      * Switches the underlying algorithm of `cc` to that of `cc_switch`, returning a boolean whether the operation was successful.
      */

@@ -31,6 +31,10 @@ typedef struct st_quicly_cc_bbr_ack_params_t {
      * bytes lost while the packet was in flight
      */
     uint64_t lost_since_sent;
+    /**
+     * if the packet was sent while app-limited
+     */
+    int app_limited;
 } quicly_cc_bbr_ack_params_t;
 
 /**
@@ -49,6 +53,10 @@ typedef struct st_quicly_cc_bbr_loss_params_t {
      * Bytes lost while the lost packet was in flight, including the packet itself.
      */
     uint64_t lost_since_sent;
+    /**
+     * Whether the sender was app-limited when the lost packet was sent.
+     */
+    int app_limited;
 } quicly_cc_bbr_loss_params_t;
 
 #ifdef __cplusplus
