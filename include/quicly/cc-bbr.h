@@ -35,6 +35,10 @@ typedef struct st_quicly_cc_bbr_ack_params_t {
      * if the packet was sent while app-limited
      */
     int app_limited;
+    /**
+     * cumulative ECT(0), ECT(1) and CE counts reported by the peer, including this ack
+     */
+    uint64_t ecn_counts[3];
 } quicly_cc_bbr_ack_params_t;
 
 /**

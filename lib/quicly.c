@@ -6382,6 +6382,16 @@ static quicly_error_t handle_reset_stream_frame(quicly_conn_t *conn, struct st_q
     return 0;
 }
 
+/* ECN counts including this ack; quicly updates its own totals only after the CC is called */
+static void ecn_counts_with_ack(quicly_conn_t *conn, const quicly_ack_frame_t *frame, size_t epoch, uint64_t *counts)
+{
+    for (size_t i = 0; i < PTLS_ELEMENTSOF(frame->ecn_counts); ++i) {
+        counts[i] = conn->super.stats.num_packets.acked_ecn_counts[i];
+        if (conn->egress.ecn.state != QUICLY_ECN_OFF && frame->ecn_counts[i] > conn->egress.ecn.counts[epoch][i])
+            counts[i] += frame->ecn_counts[i] - conn->egress.ecn.counts[epoch][i];
+    }
+}
+
 static quicly_error_t handle_ack_frame(quicly_conn_t *conn, struct st_quicly_handle_payload_state_t *state)
 {
     quicly_ack_frame_t frame;
@@ -6538,6 +6548,7 @@ static quicly_error_t handle_ack_frame(quicly_conn_t *conn, struct st_quicly_han
             .lost_since_sent = lost_since_sent(conn, &largest_cc_acked),
             .app_limited = largest_cc_acked.app_limited,
         };
+        ecn_counts_with_ack(conn, &frame, state->epoch, bbr_params.ecn_counts);
         conn->egress.cc.type->cc_on_acked(&conn->egress.cc, &conn->egress.loss, (uint32_t)bytes_acked, frame.largest_acknowledged,
                                           (uint32_t)(conn->egress.loss.sentmap.bytes_in_flight + bytes_acked), cc_limited,
                                           conn->egress.packet_number, conn->stash.now_double, conn->egress.max_udp_payload_size,
