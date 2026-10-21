@@ -36,6 +36,7 @@ extern "C" {
 #include "quicly/constants.h"
 #include "quicly/pacer.h"
 #include "quicly/loss.h"
+#include "quicly/cc-bbr.h"
 
 #define QUICLY_MIN_CWND 2
 /**
@@ -425,9 +426,11 @@ struct st_quicly_cc_type_t {
     struct st_quicly_init_cc_t *cc_init;
     /**
      * Called when a packet is newly acknowledged.
+     * @param bbr_params  send-time state of the newest acked packet, for BBR
      */
     void (*cc_on_acked)(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes, uint64_t largest_acked, uint32_t inflight,
-                        int cc_limited, uint64_t next_pn, double now, uint32_t max_udp_payload_size);
+                        int cc_limited, uint64_t next_pn, double now, uint32_t max_udp_payload_size,
+                        const quicly_cc_bbr_ack_params_t *bbr_params);
     /**
      * Called when a packet is detected as lost.
      * @param bytes    bytes declared lost, or zero iff ECN_CE is observed
@@ -465,7 +468,8 @@ struct st_quicly_cc_type_t {
      */
     uint8_t requires_pacing : 1;
     /**
-     * If set, cc_on_acked is also called for an ACK with 0 bytes (duplicate ACKs are still ignored).
+     * If set, cc_on_acked is also called for an ACK with 0 bytes (duplicate or late ACKs are still
+     * ignored).
      */
     uint8_t wants_zero_byte_acks : 1;
 };

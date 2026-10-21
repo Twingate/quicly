@@ -1,0 +1,40 @@
+/*
+ * Inputs for the BBR congestion controller. Does not include any picoquic
+ * header to keep the namespaces separate.
+ */
+
+#ifndef quicly_cc_bbr_h
+#define quicly_cc_bbr_h
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#include <stdint.h>
+
+struct st_quicly_cc_t;
+
+/**
+ * Per-ACK inputs that only BBR consumes in cc_on_acked.
+ */
+typedef struct st_quicly_cc_bbr_ack_params_t {
+    /**
+     * bytes delivered while the packet was in flight; the per-packet fields describe the
+     * newest newly acked packet that was not a late ack
+     */
+    uint64_t delivered_since_sent;
+    /**
+     * bytes in flight when the packet was sent
+     */
+    uint64_t inflight_prior;
+    /**
+     * bytes lost while the packet was in flight
+     */
+    uint64_t lost_since_sent;
+} quicly_cc_bbr_ack_params_t;
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif

@@ -68,7 +68,27 @@ typedef struct st_quicly_sent_packet_t {
      * number of bytes in-flight for the packet, from the context of CC (becomes zero when deemed lost, but not when PTO fires)
      */
     uint16_t cc_bytes_in_flight;
+    /**
+     * bytes in flight when the packet was sent
+     */
+    uint32_t inflight_prior;
+    /**
+     * low 32 bits of the total bytes lost on this path when the packet was sent
+     */
+    uint32_t lost_prior;
+    /**
+     * low 32 bits of the total bytes acked on this path when the packet was sent
+     */
+    uint32_t delivered_prior;
 } quicly_sent_packet_t;
+
+/**
+ * send-time state for rate-based CCs; quicly_sentmap_set_snapshot copies it into the packet
+ */
+typedef struct st_quicly_sent_packet_snapshot_t {
+    uint64_t delivered_prior;
+    uint64_t lost_prior;
+} quicly_sent_packet_snapshot_t;
 
 typedef enum en_quicly_sentmap_event_t {
     /**
@@ -259,6 +279,10 @@ static int quicly_sentmap_is_open(quicly_sentmap_t *map);
  */
 quicly_error_t quicly_sentmap_prepare(quicly_sentmap_t *map, uint64_t packet_number, double now, uint8_t ack_epoch);
 /**
+ * records the send-time snapshot on the packet being written; call between _prepare and _commit
+ */
+static void quicly_sentmap_set_snapshot(quicly_sentmap_t *map, const quicly_sent_packet_snapshot_t *snapshot);
+/**
  * commits a write
  */
 static void quicly_sentmap_commit(quicly_sentmap_t *map, uint16_t bytes_in_flight, int cc_limited, int promoted_path);
@@ -298,6 +322,16 @@ inline void quicly_sentmap_init(quicly_sentmap_t *map)
 inline int quicly_sentmap_is_open(quicly_sentmap_t *map)
 {
     return map->_pending_packet != NULL;
+}
+
+inline void quicly_sentmap_set_snapshot(quicly_sentmap_t *map, const quicly_sent_packet_snapshot_t *snapshot)
+{
+    assert(quicly_sentmap_is_open(map));
+
+    quicly_sent_packet_t *packet = &map->_pending_packet->data.packet;
+    packet->inflight_prior = (uint32_t)map->bytes_in_flight;
+    packet->delivered_prior = (uint32_t)snapshot->delivered_prior;
+    packet->lost_prior = (uint32_t)snapshot->lost_prior;
 }
 
 inline void quicly_sentmap_commit(quicly_sentmap_t *map, uint16_t bytes_in_flight, int cc_limited, int promoted_path)

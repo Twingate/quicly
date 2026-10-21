@@ -67,7 +67,8 @@ static uint32_t update_w_est(quicly_cc_t *cc, uint32_t bytes, uint32_t max_udp_p
 
 /* TODO: Avoid increase if sender was application limited. */
 static void cubic_on_acked(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes, uint64_t largest_acked, uint32_t inflight,
-                           int cc_limited, uint64_t next_pn, double now, uint32_t max_udp_payload_size)
+                           int cc_limited, uint64_t next_pn, double now, uint32_t max_udp_payload_size,
+                           const quicly_cc_bbr_ack_params_t *bbr_params)
 {
     assert(inflight >= bytes);
     /* Do not increase congestion window while in recovery (but jumpstart may do something different). */
