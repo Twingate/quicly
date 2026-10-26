@@ -311,14 +311,14 @@ static int cubic_start_epoch(struct st_quicly_cc_cubic_t *state, uint32_t cwnd, 
     return 1;
 }
 
-static void cubic_set_cc_limited(struct st_quicly_cc_cubic_t *state, int cc_limited, int64_t now)
+static void cubic_set_cc_limited(struct st_quicly_cc_cubic_t *state, int cc_limited, double now)
 {
     state->cc_limited = cc_limited;
     if (!cc_limited) {
         state->k = NAN;
         state->epoch_start = 0;
     } else if (state->epoch_start == 0 && state->w_est != 0) {
-        state->epoch_start = now;
+        state->epoch_start = (int64_t)now;
         state->k = NAN;
     }
 }
@@ -340,7 +340,7 @@ static uint32_t cubic_update_w_est(struct st_quicly_cc_cubic_t *state, uint32_t 
 }
 
 static void cubic_on_acked(struct st_quicly_cc_cubic_t *state, uint32_t *cwnd, uint32_t cwnd_epoch, uint32_t bytes, int cc_limited,
-                           float rtt, int64_t now, uint32_t actual_mtu, uint32_t reference_mtu)
+                           float rtt, double now, uint32_t actual_mtu, uint32_t reference_mtu)
 {
     uint32_t w_est = cubic_quantized_w_est(state, cwnd_epoch, actual_mtu);
     if (cc_limited)
@@ -350,7 +350,7 @@ static void cubic_on_acked(struct st_quicly_cc_cubic_t *state, uint32_t *cwnd, u
     if (!cubic_start_epoch(state, *cwnd, cwnd_epoch, reference_mtu) || bytes == 0)
         return;
 
-    double t_sec = (now - state->epoch_start) / 1000.;
+    double t_sec = ((int64_t)now - state->epoch_start) / 1000.;
     double w_cubic = cubic_calc_w(state, cwnd_epoch, t_sec, reference_mtu);
 
     if (w_cubic < w_est) {
@@ -551,7 +551,7 @@ static uint32_t calc_bytes_per_mtu_increase(quicly_cc_t *cc, const quicly_loss_t
 }
 
 static void pico_on_acked(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes, uint64_t largest_acked, uint32_t inflight,
-                          int cc_limited, uint64_t next_pn, int64_t now, uint32_t max_udp_payload_size)
+                          int cc_limited, uint64_t next_pn, double now, uint32_t max_udp_payload_size)
 {
     assert(inflight >= bytes);
 
@@ -591,7 +591,7 @@ static void pico_on_acked(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t b
             }
             assert(state->cwnd_prior != 0);
             state->w_est = cc->cwnd;
-            state->epoch_start = state->cc_limited ? now : 0;
+            state->epoch_start = state->cc_limited ? (int64_t)now : 0;
             state->k = NAN;
         }
         uint32_t reference_mtu = cc->conf->normalize_mtu ? QUICLY_CC_REFERENCE_MTU : max_udp_payload_size;
@@ -656,8 +656,8 @@ Cleanup:
         quicly_cc_rapid_start_exit_recovery(&cc->rapid_start);
 }
 
-static void pico_on_lost(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes, uint64_t lost_pn, uint64_t next_pn,
-                         int64_t now, uint32_t max_udp_payload_size)
+static void pico_on_lost(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes, uint64_t lost_pn, uint64_t next_pn, double now,
+                         uint32_t max_udp_payload_size)
 {
     quicly_cc__update_ecn_episodes(cc, bytes, lost_pn);
 
@@ -726,7 +726,7 @@ static void pico_on_lost(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t by
         quicly_cc_jumpstart_on_first_loss(cc, lost_pn, quicly_cc_rapid_start_is_active(&cc->rapid_start));
         /* save values */
         cc->cwnd_exiting_slow_start = cc->cwnd;
-        cc->exit_slow_start_at = now;
+        cc->exit_slow_start_at = (int64_t)now;
     }
 
     /* estimate BDP (usually from CWND before reduction) */
@@ -816,7 +816,7 @@ UpdateMetrics:
         cc->cwnd_minimum = cc->cwnd;
 }
 
-static void pico_on_late_ack(quicly_cc_t *cc, uint64_t pn, int64_t now)
+static void pico_on_late_ack(quicly_cc_t *cc, uint64_t pn, double now)
 {
     if (!(cc->state.pico.undo.start_pn <= pn && pn < cc->recovery_end))
         return;
@@ -858,7 +858,7 @@ static void pico_on_late_ack(quicly_cc_t *cc, uint64_t pn, int64_t now)
     }
 }
 
-static void pico_on_sent(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes, int64_t now)
+static void pico_on_sent(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes, double now)
 {
     /* Unused */
 }
@@ -942,13 +942,13 @@ static int cuback_on_switch(quicly_cc_t *cc)
     return switch_to(cc, &quicly_cc_type_cuback);
 }
 
-static void cubic_update_cc_limited(quicly_cc_t *cc, int cc_limited, int64_t now)
+static void cubic_update_cc_limited(quicly_cc_t *cc, int cc_limited, double now)
 {
     cubic_set_cc_limited(&cc->state.pico.cubic, cc_limited, now);
 }
 
 static void init_with_type(quicly_cc_t *cc, quicly_cc_type_t *type, const quicly_cc_conf_t *conf, uint16_t max_udp_payload_size,
-                           int64_t now)
+                           double now)
 {
     pico_reset(cc, type, quicly_cc_calc_initial_cwnd(conf->initcwnd_packets, max_udp_payload_size), conf);
     if (conf->rapid_start)
@@ -956,25 +956,25 @@ static void init_with_type(quicly_cc_t *cc, quicly_cc_type_t *type, const quicly
 }
 
 static void pico_init(quicly_init_cc_t *self, quicly_cc_t *cc, const quicly_cc_conf_t *conf, uint16_t max_udp_payload_size,
-                      int64_t now)
+                      double now)
 {
     init_with_type(cc, &quicly_cc_type_pico, conf, max_udp_payload_size, now);
 }
 
 static void reno_init(quicly_init_cc_t *self, quicly_cc_t *cc, const quicly_cc_conf_t *conf, uint16_t max_udp_payload_size,
-                      int64_t now)
+                      double now)
 {
     init_with_type(cc, &quicly_cc_type_reno, conf, max_udp_payload_size, now);
 }
 
 static void cubic_init(quicly_init_cc_t *self, quicly_cc_t *cc, const quicly_cc_conf_t *conf, uint16_t max_udp_payload_size,
-                       int64_t now)
+                       double now)
 {
     init_with_type(cc, &quicly_cc_type_cubic, conf, max_udp_payload_size, now);
 }
 
 static void cuback_init(quicly_init_cc_t *self, quicly_cc_t *cc, const quicly_cc_conf_t *conf, uint16_t max_udp_payload_size,
-                        int64_t now)
+                        double now)
 {
     init_with_type(cc, &quicly_cc_type_cuback, conf, max_udp_payload_size, now);
 }
