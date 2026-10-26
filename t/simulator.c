@@ -49,7 +49,16 @@ static void sim_random_bytes(void *dst, size_t len)
             uint8_t iv[PTLS_AES_IV_SIZE];
         } seed;
 
-        ptls_openssl_random_bytes(&seed, sizeof(seed));
+        /* QUICLY_SIM_SEED makes a run reproducible; unset, the seed is random as before. */
+        const char *seed_env = getenv("QUICLY_SIM_SEED");
+        if (seed_env != NULL && *seed_env != '\0') {
+            uint64_t v = strtoull(seed_env, NULL, 10);
+            memset(&seed, 0, sizeof(seed));
+            memcpy(seed.key, &v, sizeof(v));
+            memcpy(seed.iv, &v, sizeof(v));
+        } else {
+            ptls_openssl_random_bytes(&seed, sizeof(seed));
+        }
         prng.cipher = ptls_cipher_new(&ptls_openssl_aes128ctr, 1, seed.key);
         assert(prng.cipher != NULL);
         ptls_cipher_init(prng.cipher, seed.iv);
@@ -1221,7 +1230,8 @@ int main(int argc, char **argv)
         EVP_PKEY_free(pkey);
     }
     ptls_get_time_t tls_now = {tls_now_cb};
-    ptls_context_t tlsctx = {.random_bytes = ptls_openssl_random_bytes,
+    /* TLS draws from the sim PRNG so that QUICLY_SIM_SEED also pins CIDs, tokens and PN skipping. */
+    ptls_context_t tlsctx = {.random_bytes = sim_random_bytes,
                              .get_time = &tls_now,
                              .key_exchanges = ptls_openssl_key_exchanges,
                              .cipher_suites = ptls_openssl_cipher_suites,
@@ -1276,6 +1286,9 @@ int main(int argc, char **argv)
     argv[first_sep] = "--";
 
     int sender_count = 0;
+    /* sender conns, retained so they can be freed at exit; there are fewer senders than args */
+    quicly_conn_t **sender_conns = malloc(sizeof(*sender_conns) * argc);
+    size_t num_sender_conns = 0;
     for (int seg_start = first_sep + 1; seg_start < argc;) {
         int seg_end = find_next_separator(argc, argv, seg_start);
         if (seg_end > seg_start) {
@@ -1325,6 +1338,7 @@ int main(int argc, char **argv)
             assert(ret == 0);
             client_node->conns[0].egress = &delay_node->super;
             *node_insert_at++ = &client_node->super;
+            sender_conns[num_sender_conns++] = client_node->conns[0].quic;
             ++sender_count;
         }
         seg_start = seg_end + 1;
@@ -1356,6 +1370,10 @@ int main(int argc, char **argv)
         printf("{\"ack-scheduler\": \"summary\", \"eligible-packets\": %" PRIu64 ", \"stalls\": %" PRIu64
                ", \"queued-packets\": %" PRIu64 "}\n",
                ack_scheduler_stats.eligible_packets, ack_scheduler_stats.stalls, ack_scheduler_stats.queued_packets);
+
+    for (size_t i = 0; i < num_sender_conns; ++i)
+        quicly_free(sender_conns[i]);
+    free(sender_conns);
 
     return 0;
 }
