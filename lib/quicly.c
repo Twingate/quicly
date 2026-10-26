@@ -4051,6 +4051,7 @@ static quicly_error_t commit_send_packet(quicly_conn_t *conn, quicly_send_contex
         assert(s->path_index == 0 && "CC governs path 0 and data is sent only on that path");
         conn->egress.cc.type->cc_on_sent(&conn->egress.cc, &conn->egress.loss, (uint32_t)packet_bytes_in_flight,
                                          conn->egress.packet_number + 1, conn->stash.now_double, app_limited);
+        quicly_cc_bbr_log(conn, &conn->egress.cc);
         if (conn->egress.pacer != NULL)
             quicly_pacer_consume_window(conn->egress.pacer, packet_bytes_in_flight);
     }
@@ -4784,6 +4785,7 @@ static void notify_congestion_to_cc(quicly_conn_t *conn, uint16_t lost_bytes, ui
         }
         conn->egress.cc.type->cc_on_lost(&conn->egress.cc, &conn->egress.loss, lost_bytes, lost_pn, conn->egress.packet_number,
                                          conn->stash.now_double, conn->egress.max_udp_payload_size, bbr_params_ptr);
+        quicly_cc_bbr_log(conn, &conn->egress.cc);
         QUICLY_PROBE(CC_CONGESTION, conn, conn->stash.now, lost_pn + 1, conn->egress.loss.sentmap.bytes_in_flight,
                      conn->egress.cc.cwnd);
         QUICLY_LOG_CONN(cc_congestion, conn, {
@@ -6553,6 +6555,7 @@ static quicly_error_t handle_ack_frame(quicly_conn_t *conn, struct st_quicly_han
                                           (uint32_t)(conn->egress.loss.sentmap.bytes_in_flight + bytes_acked), cc_limited,
                                           conn->egress.packet_number, conn->stash.now_double, conn->egress.max_udp_payload_size,
                                           &bbr_params);
+        quicly_cc_bbr_log(conn, &conn->egress.cc);
         if (bytes_acked > 0)
             QUICLY_PROBE(QUICTRACE_CC_ACK, conn, conn->stash.now, &conn->egress.loss.rtt, conn->egress.cc.cwnd,
                          conn->egress.loss.sentmap.bytes_in_flight);
