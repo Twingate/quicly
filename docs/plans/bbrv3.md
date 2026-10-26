@@ -1,8 +1,8 @@
 # BBRv3 in quicly: plan and design record
 
-Status as of 2026-10-21, after three review rounds. Work lives on quicly branch `bbr-dev`
-(Twingate's fork, based on `libsdwan-quicly-2026-09-29`) and libsdwan branch `bbr`. Nothing is
-pushed. This file is the single
+Status as of 2026-10-25, after three review rounds and the first phase 5 run on a real path. Work
+lives on quicly branch `bbr-dev` (Twingate's fork, based on `libsdwan-quicly-2026-09-29`) and
+libsdwan branch `bbr`; the quicly stack is pushed as draft PRs (§14). This file is the single
 record of what was built, why, what was measured, what was rejected, and what is still open. It is
 written for future sessions picking the work up cold; it does not rely on any other document.
 
@@ -11,15 +11,16 @@ written for future sessions picking the work up cold; it does not rely on any ot
 One line per decision; the section named holds the reasoning and evidence.
 
 Project:
-- Vendor picoquic's `bbr.c` unmodified and write an adapter; fix bugs upstream, not in the copy
-  (§1, §6).
+- Vendor picoquic's `bbr.c` and write an adapter; fix bugs upstream, not in the copy. The copy
+  differs only in its includes and two RTT checks turned off (§1, §6).
 - Change upstream quicly only where BBR needs it; record other review suggestions as decisions
   (§1, §11).
 - Always compiled, chosen at runtime, no `#ifdef`; off by default in libsdwan (§1, §10).
 - Name the param structs after BBR until a second controller uses them (§10).
 
 quicly core:
-- Fractional `now` for every controller; explicit casts where milliseconds are stored (§3.1).
+- Fractional `now` passed to every controller; the existing ones truncate it everywhere, so their
+  behaviour is unchanged (§3.1).
 - Pacing rate, dispose, `requires_pacing` and zero-byte ACKs as optional zero-default hooks (§3).
 - Find `requires_pacing` by scanning the registered factories, not by allocating the pacer after
   `init_cc` (§10).
@@ -40,7 +41,8 @@ Adapter and algorithm:
 - No long-RTT startup: `rtt_min` held at 0, helpers are asserting stubs that do not abort
   (§5, §11).
 - No late-ack handler; no PTO/timeout hook (§10, §11).
-- Option "R" on; picoquic's RTT-based startup exit kept (§5, §6, §10).
+- Option "R" on; picoquic's RTT-based Startup exit and saturation check off (§6, §9).
+- Losses also reach BBR on the next ACK's notification, as picoquic passes them (§5).
 - Previous RTT sample repeated on ACKs without one, as picoquic does (§11).
 - Exported `picoquic_*` / `BBR*` names kept (§11).
 - State enum mirrored by hand, checked at each re-sync (§10).
@@ -110,11 +112,14 @@ Each item is a separate, generic hook. Existing controllers leave every new fiel
 
 1. **Sub-millisecond time for controllers.** quicly already computed fractional-ms time in
    `conn->stash.now_double` (loss detection and the sentmap used it) but handed controllers the
-   truncated `int64_t`. `now` is now `double` on the five CC callbacks and `init_cc`; controllers
-   that keep ms state cast on store. BBR's round timing, min_rtt filter and ProbeRTT thresholds
-   are microsecond quantities. Throughput effect: none measurable (all deltas under the
-   simulator's 0.59% seed-to-seed spread); it is a correctness change. Public API change for
-   out-of-tree controllers. Jumpstart resume times A/B over 6 runs each: unchanged.
+   truncated `int64_t`. `now` is now `double` on the five CC callbacks and `init_cc`; the existing
+   controllers truncate it wherever they use it (on store and in cubic's elapsed time), so reno,
+   pico, cubic and cubic-legacy are byte-identical to before in the seeded simulator; only BBR uses
+   the fraction (decided 2026-10-21: no behaviour change for existing controllers). BBR's round
+   timing, min_rtt filter and ProbeRTT thresholds are microsecond quantities. Throughput effect:
+   none measurable (all deltas under the simulator's 0.59% seed-to-seed spread); it is a
+   correctness change. Public API change for out-of-tree controllers. Jumpstart resume times A/B
+   over 6 runs each: unchanged.
 2. **`quicly_cc_t::pacing_rate`** (bytes/ms). When non-zero the pacer uses it instead of deriving
    a rate from cwnd/SRTT. BBR's model is "send at bw x pacing_gain"; without this its rate was
    computed and discarded.
@@ -269,7 +274,7 @@ samples agree with the raw delivered counter.
 | quicly callback  | picoquic notification | notes                                                         |
 |------------------|-----------------------|---------------------------------------------------------------|
 | `cc_on_acked`    | acknowledgement       | snapshots, app-limited, rate sample, ECN counts               |
-| `cc_on_lost`     | repeat                | lost packet's snapshots; a CE report (bytes == 0) is ignored  |
+| `cc_on_lost`     | repeat                | lost packet's snapshots; a CE report (bytes == 0) is ignored. Bytes and loss ranges also go on the next ACK's notification |
 | `cc_on_sent`     | restart_from_idle     | nothing else in flight and the sender app-limited (draft rule; picoquic also waits ~1 s) |
 | `cc_on_late_ack` | (NULL)                | picoquic undoes a spurious loss only in PTO recovery, which needs the timeout notification we never send |
 | `cc_dispose`     | `alg_delete`          | then frees the wrapper; without it each connection leaked 840 B |
@@ -322,11 +327,17 @@ samples agree with the raw delivered counter.
 ## 6. Vendored picoquic
 
 - `lib/picoquic-bbr.c` is picoquic `picoquic/bbr.c` at upstream `afdf5f27`, byte-identical except
-  the include block (three picoquic includes replaced by `#include "quicly/picoquic-bbr.h"`).
+  the include block (three picoquic includes replaced by `#include "quicly/picoquic-bbr.h"`) and
+  the two RTT checks below (PR 6).
   Verify: `diff <(git -C ~/dev/picoquic show afdf5f27:picoquic/bbr.c) lib/picoquic-bbr.c`.
-- Re-sync: copy the new `bbr.c`, re-apply the include edit, rebuild; new symbols fail to compile
-  against the shim. In libsdwan, quicly's own build dir must rebuild (`lab.sh build` / the
-  `quic-build` target); `--target node` alone does not re-run quicly's build.
+- Two RTT-based checks are turned off by commenting out their `#define`s:
+  `RTTJitterBufferStartup` (Startup exit on RTT rise) and `RTTJitterBufferProbe`
+  (`BBRCheckPathSaturated`, which resets the bandwidth estimate and enters Drain when RTT > 2x
+  min_rtt while pacing > 3x the delivery rate). `IsRTTTooHigh` is guarded with its only caller.
+  Evidence in §9. Neither check is in the BBR draft.
+- Re-sync: copy the new `bbr.c`, re-apply the include edit and the two `#define` edits, rebuild;
+  new symbols fail to compile against the shim. In libsdwan, quicly's own build dir must rebuild
+  (`lab.sh build` / the `quic-build` target); `--target node` alone does not re-run quicly's build.
 - `afdf5f27` includes picoquic PR #2265, which fixed (a) `rounds_since_bw_probe` never
   incremented (Reno-coexistence probe dead; after the fix BBR probes about every 63 rounds),
   (b) experiment-flag macros selected before `BBRExperiment` was defined (all options ignored),
@@ -461,6 +472,24 @@ latches the top; load-sensitive: ~75 MB/s at 1-5 ms queue vs ~69 at 8-10 ms). Wh
 queue is `inflight_hi`, set by early losses, differing per run. Run-to-run variance is large; only
 compare alternated A/B pairs from the same binary.
 
+Phase 5, same path (2026-10-23/24). The link is a Verizon Fios upload; ping to the first ISP hop
+showed the queue forms between the home router and that hop. It allocates upload capacity on
+demand: each rate step queues for 20-40 ms even at 100-300 Mbit/s, and after ~30 s idle delivery
+ramps from near 0 to full rate over ~400 ms (RTT up to 100-118 ms). It also bursts to ~790 Mbit/s
+for ~50 ms (~1.4 MB above the ~580 sustained rate) and loses 0.3-0.4% even with no queue.
+- **Loss fix.** The adapter passed 0 newly lost bytes on ACKs, so `loss_in_round` never set and
+  `bw_lo` / `inflight_lo` stayed unset; with the Startup exit off, cwnd held ~2.2 MB and a 20 ms
+  standing queue. Carrying losses to the next ACK: cruise RTT 25-30 -> 9-10 ms, cwnd ~0.75 MB.
+- **RTT-based Startup exit off.** It fired on every rate step's delay: 5 Startups, first second
+  116-218 Mbit/s. Off (with the loss fix): one Startup, first second 368-446, total 518-541 vs
+  366-490, loss 0.36-0.43% vs 0.30-0.39%. Startup builds a ~21 ms RTT queue for ~0.5 s and ends
+  on the plateau.
+- **Saturation check off.** After idle it reset `bw` to 20-67 Mbit/s mid-ramp. First second after
+  30 s idle, five runs each: median 352 vs 152 Mbit/s. Without it, the loss-based lower bounds
+  still hold ~300 Mbit/s for ~0.5 s after the ramp until the next probe.
+- ProbeRTT rarely runs once the queue is gone: picoquic's margin (5% of min_rtt plus two packets)
+  keeps postponing it while RTT stays near the minimum.
+
 GCE lab (client, relay, connector in one zone, ~55 µs RTT): BBR ~2.2-2.6 Gbit/s upload, cubic
 ~2.3; the client CPU is the limit (inflight 40-65 KB vs cwnd 160-330 KB).
 
@@ -473,9 +502,6 @@ GCE lab (client, relay, connector in one zone, ~55 µs RTT): BBR ~2.2-2.6 Gbit/s
   0.37-0.40 s (hook), peak RTT and post-outage RTT no better, and startup re-entry leaves a deeper
   queue. A vtable slot for no gain. If ever added, pass option H. Untested: repeated short
   suspensions (Wi-Fi power save), which picoquic's suspension handling targets.
-- **Disabling picoquic's RTT-based startup exit** (`RTTJitterBufferStartup`). One run: full rate
-  at 0.43 s instead of 1.0-1.3 s, but overshoot (bw 95.5 vs ~70 MB/s, 3x BDP, 37 losses) and a
-  worse steady state (queue 14.1 vs 8.1 ms, loss 0.75 vs 0.64%). Kept the RTT exit.
 - **Cruise pacing margin** (pace at 0.90 x max_bw): `max_bw` decayed and throughput spiralled to
   84 Mbit/s. The overestimate can only be fixed on the input side.
 - **Smaller send quantum plus removing the 128 µs ProbeBW-UP gate.** quicly's pacer bursts 8-10
@@ -564,10 +590,8 @@ Algorithm behaviour:
   cwnd when the BDP is tiny. draft-06 exits UP on a bandwidth plateau instead. Throughput is
   unaffected; risks if the network is the bottleneck on such a path: pacing stays at 1.25 x
   max_bw, max_bw cannot decay, unfair to cubic. Deferred; consider reporting upstream.
-- **Startup re-entered several times** on the internet path (full rate only at 1.0-1.3 s; 5
-  startups in a 3 s upload). Exits come from picoquic's RTT-based startup exit; RTT rises to
-  17-23 ms (floor 9-10) at only 5-7 MB/s. The open question is why RTT doubles that early
-  (client, connector, or startup's own sending).
+- Resolved: **Startup re-entered several times** on the internet path. The link's capacity
+  allocation delay tripped picoquic's RTT-based Startup exit; it is now off (§6, §9).
 - **ACK stalls of 2 ms or more** cost BBR 30-55% (section 4); a userspace connector under CPU load
   could stall that long.
 - `BBRInitRandom` seeds coincide for client and server when start times match (section 5).
