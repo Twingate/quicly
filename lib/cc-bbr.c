@@ -147,6 +147,11 @@ typedef struct st_quicly_cc_bbr_conn_t {
     uint64_t send_quantum;         /* the latest from picoquic_update_pacing_rate */
     quicly_cc_bbr_sample_t sample; /* the latest notification, for the bbr log point */
     uint8_t has_new_sample;
+    /* losses since the last ack notification. picoquic passes them on the ack whose processing
+     * found them; quicly finds them after cc_on_acked, so BBR gets them on the next ack. */
+    uint64_t newly_lost;
+    uint64_t newly_lost_ranges;
+    uint64_t latest_lost_pn; /* UINT64_MAX before the first loss */
 } quicly_cc_bbr_conn_t;
 
 static quicly_cc_bbr_conn_t *conn_of(picoquic_path_t *path_x)
@@ -451,6 +456,10 @@ static void bbr_on_acked(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t by
     as.nb_bytes_acknowledged = bytes;
     as.nb_bytes_delivered_since_packet_sent = delivered_since_sent;
     as.nb_bytes_lost_since_packet_sent = lost_since_sent;
+    as.nb_bytes_newly_lost = bc->newly_lost;
+    as.nb_loss_ranges_newly_lost = bc->newly_lost_ranges;
+    bc->newly_lost = 0;
+    bc->newly_lost_ranges = 0;
     as.inflight_prior = inflight_prior;
     as.is_app_limited = is_app_limited;
     as.is_cwnd_limited = cc_limited;
@@ -478,6 +487,11 @@ static void bbr_on_lost(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t byt
     /* zero bytes means CE was reported; BBR takes that from the ECN counts on the ack instead */
     if (bytes == 0)
         return;
+
+    bc->newly_lost += bytes;
+    if (bc->latest_lost_pn == UINT64_MAX || lost_pn != bc->latest_lost_pn + 1)
+        ++bc->newly_lost_ranges;
+    bc->latest_lost_pn = lost_pn;
 
     sync_inputs(bc, loss, max_udp_payload_size);
     /* a loss does not change the largest acknowledged packet number, so keep the last one */
@@ -561,6 +575,7 @@ static void bbr_reset(quicly_cc_t *cc, uint32_t initcwnd, const quicly_cc_conf_t
     bc->path.smoothed_rtt = PICOQUIC_INITIAL_RTT;
     bc->path.cwin = initcwnd;
     bc->path.send_mtu = 1280; /* conservative initial MTU; every real notify overwrites it */
+    bc->latest_lost_pn = UINT64_MAX;
 
     /* "R" turns off picoquic's rapid-start probing, which latches on and then keeps BBR out of
      * cruise. The time seeds BBR's PRNG and starts its min_rtt / probe_rtt / extra_acked stamps,
