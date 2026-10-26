@@ -1579,6 +1579,11 @@ static void test_abba_startup_and_switch(quicly_init_cc_t *init)
         quicly_cc_type_t *original = cc.type;
         cc.cwnd_exiting_slow_start = initcwnd;
         cc.ssthresh = cc.cwnd;
+        if (*type == &quicly_cc_type_bbr) {
+            ok(!(*type)->cc_switch(&cc));
+            ok(cc.type == original);
+            continue;
+        }
         ok((*type)->cc_switch(&cc));
         ok(cc.type == *type && cc.conf->normalize_mtu && cc.conf->abba);
         ok(original->cc_switch(&cc));

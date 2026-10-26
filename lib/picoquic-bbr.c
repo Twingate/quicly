@@ -24,8 +24,10 @@
 #include "quicly/picoquic-bbr.h"
 
 #define RTTJitterBuffer On
-#define RTTJitterBufferStartup On
-#define RTTJitterBufferProbe On
+/* Off: the delay while a link allocates upload capacity (e.g. fiber) exits Startup early. */
+/* #define RTTJitterBufferStartup On */
+/* Off: the same delay reads as a saturated path and resets the bandwidth estimate. */
+/* #define RTTJitterBufferProbe On */
 
 /*
 Implementation of the BBR3 algorithm, tuned for Picoquic.
@@ -373,7 +375,9 @@ static int BBRHasElapsedInPhase(picoquic_bbr_state_t* bbr_state, uint64_t interv
 #ifdef RTTJitterBuffer
 static void BBRUpdateRTTJitterBuffer(picoquic_bbr_state_t* bbr_state, bbr_per_ack_state_t* rs, uint64_t current_time);
 static void BBRResetRTTJitterBuffer(picoquic_bbr_state_t* bbr_state, uint64_t rtt_init_value, uint64_t current_time);
+#ifdef RTTJitterBufferStartup
 static int IsRTTTooHigh(picoquic_bbr_state_t* bbr_state);
+#endif
 #endif
 /* Init processes for BBRv3 */
 
@@ -1394,10 +1398,12 @@ static void BBRUpdateMinRTT(picoquic_bbr_state_t* bbr_state, picoquic_path_t* pa
 
 }
 
+#ifdef RTTJitterBufferStartup
 static int IsRTTTooHigh(picoquic_bbr_state_t* bbr_state)
 {
     return (bbr_state->nb_rtt_excess > BBRRTTJitterBufferLen);
 }
+#endif
 #else
 static void BBRUpdateMinRTT(picoquic_bbr_state_t* bbr_state, picoquic_path_t* path_x, bbr_per_ack_state_t * rs, uint64_t current_time)
 {

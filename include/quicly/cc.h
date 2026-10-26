@@ -338,6 +338,31 @@ typedef struct st_quicly_cc_t {
              */
             int64_t last_sent_time;
         } cubic;
+        /**
+         * State for the BBR congestion controller.
+         */
+        struct {
+            /**
+             * picoquic connection wrapper; only cc-bbr.c dereferences it.
+             */
+            void *path;
+            /**
+             * Latest observe() word; QUICLY_CC_BBR_OBSERVED_STATE gives the current state.
+             */
+            uint64_t cc_state;
+            /**
+             * BBR's bandwidth estimate, bytes/sec.
+             */
+            uint64_t bw;
+            /**
+             * Number of times Startup was entered, including the first.
+             */
+            uint32_t startups;
+            /**
+             * Number of times ProbeRTT was entered.
+             */
+            uint32_t probe_rtts;
+        } bbr;
     } state;
     /**
      * jumpstart state
@@ -481,12 +506,12 @@ struct st_quicly_cc_type_t {
  * The type objects for each CC. These can be used for testing the type of each `quicly_cc_t`.
  */
 extern quicly_cc_type_t quicly_cc_type_reno, quicly_cc_type_cubic, quicly_cc_type_cubic_legacy, quicly_cc_type_pico,
-    quicly_cc_type_cuback;
+    quicly_cc_type_cuback, quicly_cc_type_bbr;
 /**
  * The factory methods for each CC.
  */
 extern struct st_quicly_init_cc_t quicly_cc_reno_init, quicly_cc_cubic_init, quicly_cc_cubic_legacy_init, quicly_cc_pico_init,
-    quicly_cc_cuback_init;
+    quicly_cc_cuback_init, quicly_cc_bbr_init;
 
 /**
  * A null-terminated list of all CC types.
