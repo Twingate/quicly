@@ -189,9 +189,63 @@ static void test_pto(void)
     quicly_sentmap_dispose(&map);
 }
 
+static void test_snapshot(void)
+{
+    quicly_sentmap_t map;
+    quicly_sentmap_iter_t iter;
+    const quicly_sent_packet_t *sent;
+
+    quicly_sentmap_init(&map);
+
+    /* pn 1 has no snapshot */
+    quicly_sentmap_prepare(&map, 1, 0, QUICLY_EPOCH_1RTT);
+    quicly_sentmap_allocate(&map, on_acked);
+    quicly_sentmap_commit(&map, 1000, 0, 0);
+
+    /* pn 2 records totals past 32 bits, which the packet keeps only the low bits of */
+    quicly_sent_packet_snapshot_t snapshot = {
+        .app_limited = 1,
+        .delivered_prior = ((uint64_t)1 << 32) + 5000,
+        .lost_prior = ((uint64_t)3 << 32) + 7,
+        .delivered_time_prior_us = 0xfffffff0,
+        .delivered_sent_time_prior_us = 123,
+    };
+    quicly_sentmap_prepare(&map, 2, 1, QUICLY_EPOCH_1RTT);
+    quicly_sentmap_allocate(&map, on_acked);
+    quicly_sentmap_set_snapshot(&map, &snapshot);
+    quicly_sentmap_commit(&map, 1200, 0, 0);
+    ok(map.bytes_in_flight == 2200);
+
+    quicly_sentmap_init_iter(&map, &iter);
+    sent = quicly_sentmap_get(&iter);
+    assert(sent->packet_number == 1);
+    ok(!sent->app_limited);
+    ok(sent->inflight_prior == 0);
+    ok(sent->delivered_prior == 0);
+    ok(sent->lost_prior == 0);
+    ok(sent->delivered_time_prior_us == 0);
+    ok(sent->delivered_sent_time_prior_us == 0);
+    ok(quicly_sentmap_update(&map, &iter, QUICLY_SENTMAP_EVENT_LOST) == 0);
+
+    /* the snapshot survives another packet being lost, and inflight_prior excludes pn 2 itself */
+    sent = quicly_sentmap_get(&iter);
+    assert(sent->packet_number == 2);
+    ok(sent->app_limited);
+    ok(sent->inflight_prior == 1000);
+    ok(sent->delivered_prior == 5000);
+    ok(sent->lost_prior == 7);
+    ok(sent->delivered_time_prior_us == 0xfffffff0);
+    ok(sent->delivered_sent_time_prior_us == 123);
+    ok(quicly_sentmap_update(&map, &iter, QUICLY_SENTMAP_EVENT_ACKED) == 0);
+    ok(map.bytes_in_flight == 0);
+
+    quicly_sentmap_dispose(&map);
+}
+
 void test_sentmap(void)
 {
     subtest("basic", test_basic);
     subtest("late-ack", test_late_ack);
     subtest("pto", test_pto);
+    subtest("snapshot", test_snapshot);
 }
