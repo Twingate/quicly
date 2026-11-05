@@ -1217,7 +1217,8 @@ static void test_set_cc(void)
 /* stub controllers with a fixed cwnd, recording what quicly calls */
 static size_t stub_num_disposed;
 static size_t stub_num_zero_byte_acks;
-static quicly_cc_t *stub_last_disposed;
+static quicly_cc_t *stub_live_cc;
+static int stub_disposed_live_cc;
 
 static void stub_on_acked(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes, uint64_t largest_acked, uint32_t inflight,
                           int cc_limited, uint64_t next_pn, double now, uint32_t max_udp_payload_size,
@@ -1239,7 +1240,7 @@ static void stub_on_sent(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t by
 static void stub_dispose(quicly_cc_t *cc)
 {
     ++stub_num_disposed;
-    stub_last_disposed = cc;
+    stub_disposed_live_cc = cc == stub_live_cc;
 }
 
 static int stub_switch_a(quicly_cc_t *cc);
@@ -1297,6 +1298,7 @@ static void test_set_cc_dispose(void)
     ok(quicly_connect(&conn, &quic_ctx, "example.com", &fake_address.sa, NULL, new_master_id(), ptls_iovec_init(NULL, 0), NULL,
                       NULL, NULL) == 0);
     stub_num_disposed = 0;
+    stub_live_cc = &conn->egress.cc;
 
     ok(quicly_set_cc(conn, &stub_type_a));
     ok(stub_num_disposed == 0);
@@ -1313,7 +1315,7 @@ static void test_set_cc_dispose(void)
     /* the copy of the old state is disposed of, not the live one */
     ok(quicly_set_cc(conn, &stub_type_b));
     ok(stub_num_disposed == 1);
-    ok(stub_last_disposed != &conn->egress.cc);
+    ok(!stub_disposed_live_cc);
     ok(conn->egress.cc.type == &stub_type_b);
 
     quicly_free(conn);
