@@ -317,6 +317,12 @@ static void bbr_on_acked(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t by
         bc->path.ecn_ce_total_remote = bbr_params->ecn_counts[2];
     }
 
+    /* As in picoquic, BBR hears of acks only once there is an RTT sample. rtt.latest is 0 until
+     * then, which BBR would take as its min RTT; on a new path, an ack whose largest packet is
+     * ACK-only takes no sample. Losses found meanwhile wait for the next ack. */
+    if (loss->rtt.latest == 0)
+        return;
+
     sync_inputs(bc, loss, max_udp_payload_size);
     sync_cb_args(bc, next_pn, largest_acked);
 
@@ -395,9 +401,6 @@ static void bbr_on_sent(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t byt
 
 static void bbr_reset(quicly_cc_t *cc, uint32_t initcwnd, const quicly_cc_conf_t *conf, double now)
 {
-    /* a controller that is already BBR must have been disposed first, or its state would leak */
-    assert(cc->type != &quicly_cc_type_bbr || cc->state.bbr.path == NULL);
-
     quicly_cc_bbr_conn_t *bc;
     if ((bc = malloc(sizeof(*bc))) == NULL) {
         assert(!"quicly_cc_type_bbr: out of memory allocating BBR connection state");
