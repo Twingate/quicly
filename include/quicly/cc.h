@@ -36,6 +36,7 @@ extern "C" {
 #include "quicly/constants.h"
 #include "quicly/pacer.h"
 #include "quicly/loss.h"
+#include "quicly/cc-bbr.h"
 
 #define QUICLY_MIN_CWND 2
 /**
@@ -425,20 +426,25 @@ struct st_quicly_cc_type_t {
     struct st_quicly_init_cc_t *cc_init;
     /**
      * Called when a packet is newly acknowledged.
+     * @param bbr_params  send-time state of the newest acked packet, for BBR
      */
     void (*cc_on_acked)(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes, uint64_t largest_acked, uint32_t inflight,
-                        int cc_limited, uint64_t next_pn, double now, uint32_t max_udp_payload_size);
+                        int cc_limited, uint64_t next_pn, double now, uint32_t max_udp_payload_size,
+                        const quicly_cc_bbr_ack_params_t *bbr_params);
     /**
      * Called when a packet is detected as lost.
      * @param bytes    bytes declared lost, or zero iff ECN_CE is observed
      * @param next_pn  the next unsent packet number, used for setting the recovery window
+     * @param bbr_params  the lost packet's snapshots, for BBR; NULL when ECN_CE is observed
      */
     void (*cc_on_lost)(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes, uint64_t lost_pn, uint64_t next_pn, double now,
-                       uint32_t max_udp_payload_size);
+                       uint32_t max_udp_payload_size, const quicly_cc_bbr_loss_params_t *bbr_params);
     /**
      * Called after a packet is sent.
+     * @param next_pn      the packet number after the one just sent
+     * @param app_limited  if the sender had nothing more to send when this packet went out
      */
-    void (*cc_on_sent)(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes, double now);
+    void (*cc_on_sent)(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes, uint64_t next_pn, double now, int app_limited);
     /**
      * Switches the underlying algorithm of `cc` to that of `cc_switch`, returning a boolean whether the operation was successful.
      */
@@ -465,7 +471,8 @@ struct st_quicly_cc_type_t {
      */
     uint8_t requires_pacing : 1;
     /**
-     * If set, cc_on_acked is also called for an ACK with 0 bytes (duplicate ACKs are still ignored).
+     * If set, cc_on_acked is also called for an ACK with 0 bytes (duplicate or late ACKs are still
+     * ignored).
      */
     uint8_t wants_zero_byte_acks : 1;
 };
