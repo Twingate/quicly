@@ -1451,6 +1451,30 @@ static void do_test_zero_byte_acks(quicly_cc_type_t *type)
     send_ack_only(server, client);
     ok(stub_num_zero_byte_acks == (wants_zero_byte_acks ? 1 : 0));
 
+    /* an ACK newly acknowledging only a packet already declared lost: a late ack, not a zero-byte ack */
+    quicly_stream_t *stream;
+    ok(quicly_open_stream(client, &stream, 0) == 0);
+    quicly_address_t dest;
+    quicly_address_t src;
+    struct iovec lost;
+    uint8_t lostbuf[quic_ctx.transport_params.max_udp_payload_size];
+    size_t num_datagrams = 1;
+    ok(quicly_streambuf_egress_write(stream, "a", 1) == 0);
+    ok(quicly_send(client, &dest, &src, &lost, &num_datagrams, lostbuf, sizeof(lostbuf)) == 0);
+    ok(num_datagrams == 1);
+    for (int i = 0; i != 3; ++i) {
+        ok(quicly_streambuf_egress_write(stream, "b", 1) == 0);
+        ok(transmit(client, server) == 1);
+    }
+    send_ack_only(server, client);
+    ok(client->super.stats.num_packets.lost == 1);
+    quicly_decoded_packet_t decoded;
+    ok(decode_packets(&decoded, &lost, 1) == 1);
+    ok(quicly_receive(server, NULL, &fake_address.sa, &decoded) == 0);
+    send_ack_only(server, client);
+    ok(client->super.stats.num_packets.late_acked == 1);
+    ok(stub_num_zero_byte_acks == (wants_zero_byte_acks ? 1 : 0));
+
     quicly_free(client);
     quicly_free(server);
 }
