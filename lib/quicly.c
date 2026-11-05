@@ -2169,6 +2169,8 @@ static quicly_error_t promote_path(quicly_conn_t *conn, size_t path_index)
     }
 
     /* reset CC (FIXME flush sentmap and reset loss recovery) */
+    if (conn->egress.cc.type->cc_dispose != NULL)
+        conn->egress.cc.type->cc_dispose(&conn->egress.cc);
     conn->egress.cc.type->cc_init->cb(conn->egress.cc.type->cc_init, &conn->egress.cc, &get_egress_context(conn)->cc,
                                       conn->egress.max_udp_payload_size, conn->stash.now_double);
 
@@ -2317,6 +2319,8 @@ void quicly_free(quicly_conn_t *conn)
 
     unlock_now(conn);
 
+    if (conn->egress.cc.type->cc_dispose != NULL)
+        conn->egress.cc.type->cc_dispose(&conn->egress.cc);
     if (conn->egress.pacer != NULL)
         free(conn->egress.pacer);
     if (conn->connection_close.reason_phrase != NULL)
@@ -2783,6 +2787,15 @@ static int collect_transport_parameters(ptls_t *tls, struct st_ptls_handshake_pr
     return type == get_transport_parameters_extension_id(conn->super.version);
 }
 
+static int cc_requires_pacing(const struct st_quicly_init_cc_t *init_cc)
+{
+    /* the controller is built later, so find its type by its factory */
+    for (quicly_cc_type_t **type = quicly_cc_all_types; *type != NULL; ++type)
+        if ((*type)->cc_init == init_cc)
+            return (*type)->requires_pacing;
+    return 0;
+}
+
 static quicly_conn_t *create_connection(quicly_context_t *ctx, uint32_t protocol_version, const char *server_name,
                                         struct sockaddr *remote_addr, struct sockaddr *local_addr, ptls_iovec_t *remote_cid,
                                         const quicly_cid_plaintext_t *local_cid, ptls_handshake_properties_t *handshake_properties,
@@ -2828,7 +2841,8 @@ static quicly_conn_t *create_connection(quicly_context_t *ctx, uint32_t protocol
     conn->super.data = appdata;
     if (enable_with_ratio255(ctx->alt_egress_ratio, ctx->tls->random_bytes))
         conn->egress.alt_ctx = 1;
-    if (get_egress_context(conn)->pacing && (pacer = malloc(sizeof(*pacer))) == NULL) {
+    if ((get_egress_context(conn)->pacing || cc_requires_pacing(get_egress_context(conn)->cc.init_cc)) &&
+        (pacer = malloc(sizeof(*pacer))) == NULL) {
         ptls_free(tls);
         free(conn);
         return NULL;
@@ -3660,6 +3674,9 @@ static quicly_error_t on_ack_retire_connection_id(quicly_sentmap_t *map, const q
 static uint32_t calc_pacer_send_rate(quicly_conn_t *conn)
 {
     uint32_t multiplier;
+
+    if (conn->egress.cc.pacing_rate != 0)
+        return conn->egress.cc.pacing_rate;
 
     if (conn->egress.cc.num_loss_episodes == 0) {
         if (quicly_cc_in_jumpstart(&conn->egress.cc)) {
@@ -5868,7 +5885,13 @@ void quicly_send_datagram_frames(quicly_conn_t *conn, ptls_iovec_t *datagrams, s
 
 int quicly_set_cc(quicly_conn_t *conn, quicly_cc_type_t *cc)
 {
-    return cc->cc_switch(&conn->egress.cc);
+    /* cc_switch may reset egress.cc: keep a copy and dispose of it only if the switch succeeded */
+    quicly_cc_t old = conn->egress.cc;
+    if (!cc->cc_switch(&conn->egress.cc))
+        return 0;
+    if (old.type != cc && old.type->cc_dispose != NULL)
+        old.type->cc_dispose(&old);
+    return 1;
 }
 
 int quicly_uses_alt_egress(quicly_conn_t *conn)
@@ -6460,12 +6483,13 @@ static quicly_error_t handle_ack_frame(quicly_conn_t *conn, struct st_quicly_han
                                                        : QUICLY_LOSS_ACK_RECEIVED_KIND_NON_ACK_ELICITING);
 
     /* OnPacketAcked and OnPacketAckedCC */
-    if (bytes_acked > 0) {
+    if (bytes_acked > 0 || (conn->egress.cc.type->wants_zero_byte_acks && largest_newly_acked.pn != UINT64_MAX)) {
         conn->egress.cc.type->cc_on_acked(&conn->egress.cc, &conn->egress.loss, (uint32_t)bytes_acked, frame.largest_acknowledged,
                                           (uint32_t)(conn->egress.loss.sentmap.bytes_in_flight + bytes_acked), cc_limited,
                                           conn->egress.packet_number, conn->stash.now_double, conn->egress.max_udp_payload_size);
-        QUICLY_PROBE(QUICTRACE_CC_ACK, conn, conn->stash.now, &conn->egress.loss.rtt, conn->egress.cc.cwnd,
-                     conn->egress.loss.sentmap.bytes_in_flight);
+        if (bytes_acked > 0)
+            QUICLY_PROBE(QUICTRACE_CC_ACK, conn, conn->stash.now, &conn->egress.loss.rtt, conn->egress.cc.cwnd,
+                         conn->egress.loss.sentmap.bytes_in_flight);
     }
 
     QUICLY_PROBE(CC_ACK_RECEIVED, conn, conn->stash.now, frame.largest_acknowledged, bytes_acked, conn->egress.cc.cwnd,
