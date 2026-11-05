@@ -173,7 +173,9 @@ Each item is a separate, generic hook. Existing controllers leave every new fiel
    app-limited, output unchanged; it matters for traffic with pauses (not yet measured).
 9. **ECN counts.** The ack params carry cumulative ECT(0)/ECT(1)/CE including the current ACK;
    quicly updates its totals after calling the controller, so they are computed from the frame
-   first. BBRv3 reacts when the CE share per round exceeds 20%; the same share ends startup. The
+   first. Once the peer reports ECT(1), which quicly never sends, quicly turns ECN off and the
+   adapter stops reading the counts, from that ACK on. BBRv3 reacts when the CE share per round
+   exceeds 20%; the same share ends startup. The
    zero-byte `cc_on_lost` (quicly's CE event, used by Cubic/Reno) is ignored by BBR, so
    `num_ecn_loss_episodes` is never counted for BBR. Simulated: classic CoDel and sparse marking
    unchanged; step marking 0.5 ms at 75 MB/s queue 0.55 -> 0.37 ms, CE -75%, throughput -4%;

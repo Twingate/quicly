@@ -443,9 +443,12 @@ static void bbr_on_acked(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t by
     if (bbr_params->bandwidth_estimate != 0)
         bc->path.bandwidth_estimate = bbr_params->bandwidth_estimate;
 
-    bc->path.ecn_ect0_total_remote = bbr_params->ecn_counts[0];
-    bc->path.ecn_ect1_total_remote = bbr_params->ecn_counts[1];
-    bc->path.ecn_ce_total_remote = bbr_params->ecn_counts[2];
+    /* quicly never sends ECT(1) and turns ECN off once the peer reports it; stop reading the counts
+     * then too, including the ACK that reports it */
+    if (bbr_params->ecn_counts[1] == 0) {
+        bc->path.ecn_ect0_total_remote = bbr_params->ecn_counts[0];
+        bc->path.ecn_ce_total_remote = bbr_params->ecn_counts[2];
+    }
 
     sync_inputs(bc, loss, max_udp_payload_size);
     sync_cb_args(bc, next_pn, largest_acked);
