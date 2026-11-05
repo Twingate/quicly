@@ -1,6 +1,6 @@
 /*
- * Inputs for the BBR congestion controller. Does not include any picoquic
- * header to keep the namespaces separate.
+ * Inputs and state names for the BBR congestion controller. Does not include
+ * any picoquic header to keep the namespaces separate.
  */
 
 #ifndef quicly_cc_bbr_h
@@ -62,6 +62,17 @@ typedef struct st_quicly_cc_bbr_loss_params_t {
      */
     int app_limited;
 } quicly_cc_bbr_loss_params_t;
+
+/**
+ * BBR's current state from cc.state.bbr.cc_state; see quicly_cc_bbr_state_name()
+ */
+#define QUICLY_CC_BBR_OBSERVED_STATE(w) ((unsigned)((w)&0xff))
+
+/**
+ * name of a BBR state; "invalid" if out of range
+ */
+const char *quicly_cc_bbr_state_name(unsigned state);
+
 
 #ifdef __cplusplus
 }
