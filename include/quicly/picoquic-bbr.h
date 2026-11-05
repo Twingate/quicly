@@ -1,12 +1,36 @@
 /*
- * bbr.h -- self-contained picoquic shim for the vendored picoquic BBRv3
- * implementation (bbr.c).
+* Author: Christian Huitema
+* Copyright (c) 2017, Private Octopus, Inc. (picoquic.h, picoquic_internal.h)
+* Copyright (c) 2019, Private Octopus, Inc. (cc_common.h)
+* Copyright (c) 2026, Private Octopus, Inc. (picoquic_utils.h)
+* All rights reserved.
+*
+* Permission to use, copy, modify, and distribute this software for any
+* purpose with or without fee is hereby granted, provided that the above
+* copyright notice and this permission notice appear in all copies.
+*
+* THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+* ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+* WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+* DISCLAIMED. IN NO EVENT SHALL Private Octopus, Inc. BE LIABLE FOR ANY
+* DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+* (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+* LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+* ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+* (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+* SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+*/
+
+/*
+ * picoquic-bbr.h -- self-contained picoquic shim for the vendored picoquic BBRv3
+ * implementation (picoquic-bbr.c, upstream picoquic/bbr.c).
  *
  * This header replaces the three picoquic headers that bbr.c originally
  * included (picoquic_internal.h, cc_common.h, picoquic_utils.h) and what they
  * pulled in. It declares EXACTLY the picoquic symbols that
  * bbr.c references, with identical names and field types copied verbatim from
- * the picoquic sources, so that future re-syncs of bbr.c remain a clean copy.
+ * the picoquic sources (picoquic.h among them), so that future re-syncs of bbr.c
+ * remain a clean copy.
  *
  * It deliberately does NOT #include any picoquic or quicly header.
  */
