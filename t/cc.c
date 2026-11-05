@@ -1819,6 +1819,28 @@ static void test_bbr_ecn(void)
     sim.cc.type->cc_dispose(&sim.cc);
 }
 
+static void test_bbr_no_rtt_sample(void)
+{
+    bbr_sim_t sim;
+    bbr_sim_init(&sim, 10000, 20);
+
+    /* on a new path, acks whose largest packet is ACK-only take no RTT sample, so rtt.latest stays
+     * 0; enough of them would fill BBR's 7-slot RTT jitter buffer */
+    sim.loss.rtt.latest = 0;
+    quicly_cc_bbr_ack_params_t params = {0};
+    for (int i = 0; i < 8; ++i) {
+        sim.now += 2;
+        sim.cc.type->cc_on_acked(&sim.cc, &sim.loss, 0, 0, 0, 1, sim.next_pn, sim.now, sim.mtu, &params);
+    }
+
+    /* it must not become BBR's min RTT, which would hold cwnd under the BDP */
+    for (int round = 0; round < 20; ++round)
+        bbr_sim_round(&sim, NULL);
+    ok(sim.cc.cwnd >= sim.link_rate * sim.base_rtt);
+
+    sim.cc.type->cc_dispose(&sim.cc);
+}
+
 static void test_bbr_restart_from_idle(void)
 {
     bbr_sim_t sim;
@@ -1850,6 +1872,7 @@ void test_cc(void)
     subtest("bbr-startup-high-loss", test_bbr_startup_high_loss);
     subtest("bbr-restart-from-idle", test_bbr_restart_from_idle);
     subtest("bbr-ecn", test_bbr_ecn);
+    subtest("bbr-no-rtt-sample", test_bbr_no_rtt_sample);
     subtest("fast-cbrt", test_fast_cbrt);
     subtest("rapid-start", test_rapid_start);
     subtest("abba", test_abba);
