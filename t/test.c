@@ -1214,6 +1214,112 @@ static void test_set_cc(void)
     ok(strcmp(stats.cc.type->name, "reno") == 0);
 }
 
+/* stub controllers with a fixed cwnd, recording what quicly calls */
+static size_t stub_num_disposed;
+static size_t stub_num_zero_byte_acks;
+static quicly_cc_t *stub_last_disposed;
+
+static void stub_on_acked(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes, uint64_t largest_acked, uint32_t inflight,
+                          int cc_limited, uint64_t next_pn, double now, uint32_t max_udp_payload_size,
+                          const quicly_cc_bbr_ack_params_t *bbr_params)
+{
+    if (bytes == 0)
+        ++stub_num_zero_byte_acks;
+}
+
+static void stub_on_lost(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes, uint64_t lost_pn, uint64_t next_pn, double now,
+                         uint32_t max_udp_payload_size, const quicly_cc_bbr_loss_params_t *bbr_params)
+{
+}
+
+static void stub_on_sent(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes, uint64_t next_pn, double now, int app_limited)
+{
+}
+
+static void stub_dispose(quicly_cc_t *cc)
+{
+    ++stub_num_disposed;
+    stub_last_disposed = cc;
+}
+
+static int stub_switch_a(quicly_cc_t *cc);
+static int stub_switch_b(quicly_cc_t *cc);
+static int stub_switch_acks(quicly_cc_t *cc);
+static int stub_switch_no_acks(quicly_cc_t *cc);
+
+static int stub_refuse_switch(quicly_cc_t *cc)
+{
+    return 0;
+}
+
+#define STUB_CC_TYPE(name_, switch_, ...)                                                                                          \
+    {.name = name_,                                                                                                                \
+     .cc_init = &quicly_cc_reno_init,                                                                                              \
+     .cc_on_acked = stub_on_acked,                                                                                                 \
+     .cc_on_lost = stub_on_lost,                                                                                                   \
+     .cc_on_sent = stub_on_sent,                                                                                                   \
+     .cc_switch = switch_,                                                                                                         \
+     __VA_ARGS__}
+static quicly_cc_type_t stub_type_a = STUB_CC_TYPE("stub-a", stub_switch_a, .cc_dispose = stub_dispose);
+static quicly_cc_type_t stub_type_b = STUB_CC_TYPE("stub-b", stub_switch_b, .cc_dispose = stub_dispose);
+static quicly_cc_type_t stub_type_refusing = STUB_CC_TYPE("stub-refusing", stub_refuse_switch);
+static quicly_cc_type_t stub_type_acks = STUB_CC_TYPE("stub-acks", stub_switch_acks, .wants_zero_byte_acks = 1);
+static quicly_cc_type_t stub_type_no_acks = STUB_CC_TYPE("stub-no-acks", stub_switch_no_acks);
+#undef STUB_CC_TYPE
+
+static int stub_switch_a(quicly_cc_t *cc)
+{
+    cc->type = &stub_type_a;
+    return 1;
+}
+
+static int stub_switch_b(quicly_cc_t *cc)
+{
+    cc->type = &stub_type_b;
+    return 1;
+}
+
+static int stub_switch_acks(quicly_cc_t *cc)
+{
+    cc->type = &stub_type_acks;
+    return 1;
+}
+
+static int stub_switch_no_acks(quicly_cc_t *cc)
+{
+    cc->type = &stub_type_no_acks;
+    return 1;
+}
+
+static void test_set_cc_dispose(void)
+{
+    quicly_conn_t *conn;
+    ok(quicly_connect(&conn, &quic_ctx, "example.com", &fake_address.sa, NULL, new_master_id(), ptls_iovec_init(NULL, 0), NULL,
+                      NULL, NULL) == 0);
+    stub_num_disposed = 0;
+
+    ok(quicly_set_cc(conn, &stub_type_a));
+    ok(stub_num_disposed == 0);
+
+    /* the old state is the live state, so it must not be freed */
+    ok(quicly_set_cc(conn, &stub_type_a));
+    ok(stub_num_disposed == 0);
+    ok(conn->egress.cc.type == &stub_type_a);
+
+    ok(!quicly_set_cc(conn, &stub_type_refusing));
+    ok(stub_num_disposed == 0);
+    ok(conn->egress.cc.type == &stub_type_a);
+
+    /* the copy of the old state is disposed of, not the live one */
+    ok(quicly_set_cc(conn, &stub_type_b));
+    ok(stub_num_disposed == 1);
+    ok(stub_last_disposed != &conn->egress.cc);
+    ok(conn->egress.cc.type == &stub_type_b);
+
+    quicly_free(conn);
+    ok(stub_num_disposed == 2);
+}
+
 static void test_cc_accel_context(void)
 {
     quicly_init_cc_t *const policies[] = {&quicly_cc_cubic_init, &quicly_cc_cuback_init};
@@ -1317,6 +1423,42 @@ static void test_setup_connected_peers(quicly_conn_t **client, quicly_conn_t **s
     ok(quicly_get_state(*client) == QUICLY_STATE_CONNECTED);
     ok(quicly_get_state(*server) == QUICLY_STATE_CONNECTED);
     exchange_until_idle(*client, *server);
+}
+
+/* has `conn` send an ACK-only packet, acknowledging what it has received */
+static void send_ack_only(quicly_conn_t *conn, quicly_conn_t *peer)
+{
+    conn->application->super.unacked_count = 1;
+    conn->egress.send_ack_at = 0;
+    ok(transmit(conn, peer) == 1);
+}
+
+static void do_test_zero_byte_acks(quicly_cc_type_t *type)
+{
+    int wants_zero_byte_acks = type->wants_zero_byte_acks;
+    quicly_conn_t *client;
+    quicly_conn_t *server;
+    test_setup_connected_peers(&client, &server);
+    ok(quicly_set_cc(client, type));
+    stub_num_zero_byte_acks = 0;
+
+    /* an ACK newly acknowledging only the client's ACK-only packet */
+    send_ack_only(client, server);
+    send_ack_only(server, client);
+    ok(stub_num_zero_byte_acks == (wants_zero_byte_acks ? 1 : 0));
+
+    /* the same ACK again: nothing newly acknowledged */
+    send_ack_only(server, client);
+    ok(stub_num_zero_byte_acks == (wants_zero_byte_acks ? 1 : 0));
+
+    quicly_free(client);
+    quicly_free(server);
+}
+
+static void test_zero_byte_acks(void)
+{
+    subtest("wanted", do_test_zero_byte_acks, &stub_type_acks);
+    subtest("unwanted", do_test_zero_byte_acks, &stub_type_no_acks);
 }
 
 static void test_setup_send_context(quicly_conn_t *conn, quicly_send_context_t *s, struct iovec *datagram, void *buf,
@@ -2217,6 +2359,8 @@ int main(int argc, char **argv)
     subtest("lossy", test_lossy);
     subtest("test-nondecryptable-initial", test_nondecryptable_initial);
     subtest("set_cc", test_set_cc);
+    subtest("set_cc_dispose", test_set_cc_dispose);
+    subtest("zero_byte_acks", test_zero_byte_acks);
     subtest("cc-accel-context", test_cc_accel_context);
     subtest("ecn-index-from-bits", test_ecn_index_from_bits);
     subtest("resume-sendrate", test_resume_sendrate);
