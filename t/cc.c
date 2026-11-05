@@ -1643,6 +1643,8 @@ typedef struct st_bbr_sim_t {
     uint64_t next_pn;
     uint64_t delivered;
     uint64_t lost;
+    uint64_t ecn_counts[3]; /* ECT(0), ECT(1) and CE as the peer reports them */
+    int mark_ce;            /* the bottleneck marks every other packet CE */
 } bbr_sim_t;
 
 #define BBR_SIM_MAX_PACKETS 4096
@@ -1703,10 +1705,12 @@ static size_t bbr_sim_round(bbr_sim_t *sim, const uint8_t *lose)
             sim->cc.type->cc_on_lost(&sim->cc, &sim->loss, sim->mtu, pkts[i].pn, sim->next_pn, at, sim->mtu, &params);
         } else {
             sim->delivered += sim->mtu;
+            ++sim->ecn_counts[sim->mark_ce && i % 2 != 0 ? 2 : 0];
             quicly_cc_bbr_ack_params_t params = {.delivered_since_sent = sim->delivered - pkts[i].delivered_prior,
                                                  .inflight_prior = pkts[i].inflight_prior,
                                                  .lost_since_sent = sim->lost - pkts[i].lost_prior,
                                                  .bandwidth_estimate = (uint64_t)(rate * 1000)};
+            memcpy(params.ecn_counts, sim->ecn_counts, sizeof(params.ecn_counts));
             sim->cc.type->cc_on_acked(&sim->cc, &sim->loss, sim->mtu, pkts[i].pn, (uint32_t)sim->loss.sentmap.bytes_in_flight, 1,
                                       sim->next_pn, at, sim->mtu, &params);
         }
@@ -1788,6 +1792,33 @@ static void test_bbr_startup_high_loss(void)
     sim.cc.type->cc_dispose(&sim.cc);
 }
 
+/* Marks half of the fourth and fifth rounds CE and returns BBR's state after them. */
+static const char *bbr_startup_after_ce(bbr_sim_t *sim, int report_ect1)
+{
+    bbr_sim_init(sim, 1000000, 20);
+    for (int round = 0; round < 3; ++round)
+        bbr_sim_round(sim, NULL);
+    sim->mark_ce = 1;
+    if (report_ect1)
+        sim->ecn_counts[1] = 1;
+    bbr_sim_round(sim, NULL);
+    bbr_sim_round(sim, NULL);
+    return bbr_sim_state(sim);
+}
+
+static void test_bbr_ecn(void)
+{
+    bbr_sim_t sim;
+
+    /* a CE share over 20% ends Startup */
+    ok(strcmp(bbr_startup_after_ce(&sim, 0), "startup") != 0);
+    sim.cc.type->cc_dispose(&sim.cc);
+
+    /* quicly turns ECN off when the peer reports ECT(1), so BBR ignores the counts too */
+    ok(strcmp(bbr_startup_after_ce(&sim, 1), "startup") == 0);
+    sim.cc.type->cc_dispose(&sim.cc);
+}
+
 static void test_bbr_restart_from_idle(void)
 {
     bbr_sim_t sim;
@@ -1818,6 +1849,7 @@ void test_cc(void)
     subtest("bbr-startup-plateau", test_bbr_startup_plateau);
     subtest("bbr-startup-high-loss", test_bbr_startup_high_loss);
     subtest("bbr-restart-from-idle", test_bbr_restart_from_idle);
+    subtest("bbr-ecn", test_bbr_ecn);
     subtest("fast-cbrt", test_fast_cbrt);
     subtest("rapid-start", test_rapid_start);
     subtest("abba", test_abba);
