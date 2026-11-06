@@ -6417,7 +6417,10 @@ static uint64_t sample_delivery_rate(quicly_conn_t *conn, const quicly_sent_pack
         uint32_t received_over = now_us - acked->delivered_time_prior_us;
         uint32_t sent_over = sent_us - acked->delivered_sent_time_prior_us;
         uint32_t interval = sent_over > received_over ? sent_over : received_over;
-        if (interval >= conn->egress.loss.rtt.minimum * 1000)
+        /* an interval under the min RTT means bad timing data and would overstate the rate, so the
+         * sample is dropped (BBR draft); +2 us absorbs rounding errors; the min RTT can be as low as
+         * 1 us, so reject 0 explicitly */
+        if (interval != 0 && interval + 2 >= conn->egress.loss.rtt.minimum * 1000)
             bandwidth_estimate = (uint64_t)delivered_since_sent(conn, acked) * 1000000 / interval;
         conn->egress.delivery.delivered_sent_time_us = sent_us;
     }
