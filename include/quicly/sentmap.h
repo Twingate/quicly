@@ -81,6 +81,14 @@ typedef struct st_quicly_sent_packet_t {
      */
     uint32_t lost_prior;
     /**
+     * low 32 bits of the microsecond time of the most recent ack when the packet was sent
+     */
+    uint32_t delivered_time_prior_us;
+    /**
+     * low 32 bits of the microsecond send time of the packet that ack acknowledged
+     */
+    uint32_t delivered_sent_time_prior_us;
+    /**
      * low 32 bits of the total bytes acked on this path when the packet was sent
      */
     uint32_t delivered_prior;
@@ -93,6 +101,8 @@ typedef struct st_quicly_sent_packet_snapshot_t {
     int app_limited;
     uint64_t delivered_prior;
     uint64_t lost_prior;
+    uint32_t delivered_time_prior_us;
+    uint32_t delivered_sent_time_prior_us;
 } quicly_sent_packet_snapshot_t;
 
 typedef enum en_quicly_sentmap_event_t {
@@ -338,6 +348,8 @@ inline void quicly_sentmap_set_snapshot(quicly_sentmap_t *map, const quicly_sent
     packet->app_limited = snapshot->app_limited != 0;
     packet->delivered_prior = (uint32_t)snapshot->delivered_prior;
     packet->lost_prior = (uint32_t)snapshot->lost_prior;
+    packet->delivered_time_prior_us = snapshot->delivered_time_prior_us;
+    packet->delivered_sent_time_prior_us = snapshot->delivered_sent_time_prior_us;
 }
 
 inline void quicly_sentmap_commit(quicly_sentmap_t *map, uint16_t bytes_in_flight, int cc_limited, int promoted_path)

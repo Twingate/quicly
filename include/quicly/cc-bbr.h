@@ -33,6 +33,10 @@ typedef struct st_quicly_cc_bbr_ack_params_t {
      */
     uint64_t lost_since_sent;
     /**
+     * delivery rate in bytes/sec over the interval this ack covers; 0 if not measured
+     */
+    uint64_t bandwidth_estimate;
+    /**
      * if the packet was sent while app-limited
      */
     int app_limited;
