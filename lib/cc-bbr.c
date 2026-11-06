@@ -66,7 +66,7 @@ typedef struct st_quicly_cc_bbr_sample_t {
      */
     uint8_t notification;
     /**
-     * value of `is_app_limited` fed to BBR for this ACK
+     * value of `is_app_limited` fed to BBR for this notification
      */
     uint8_t is_app_limited;
     /**
@@ -78,6 +78,7 @@ typedef struct st_quicly_cc_bbr_sample_t {
     uint64_t smoothed_rtt_us;
     uint64_t bytes_acked;
     uint64_t bytes_lost;
+    uint64_t newly_lost; /* on an ack: losses found since the last ack, which BBR takes on this one */
     uint64_t delivered_since_sent;
     uint64_t lost_since_sent;
     uint64_t inflight_prior;
@@ -331,8 +332,8 @@ static quicly_cc_bbr_sample_t *start_sample(quicly_cc_bbr_conn_t *bc)
  * the outputs.
  */
 static void notify(quicly_cc_bbr_conn_t *bc, quicly_cc_t *cc, picoquic_congestion_notification_t pq_notification,
-                   quicly_cc_bbr_notification_t q_notification, picoquic_per_ack_state_t *as, int is_app_limited, uint64_t now_us,
-                   double now, quicly_cc_bbr_sample_t *sample)
+                   quicly_cc_bbr_notification_t q_notification, picoquic_per_ack_state_t *as, uint64_t now_us, double now,
+                   quicly_cc_bbr_sample_t *sample)
 {
     picoquic_bbr_algorithm_struct.alg_notify(&bc->cnx, &bc->path, pq_notification, as, now_us);
 
@@ -346,9 +347,11 @@ static void notify(quicly_cc_bbr_conn_t *bc, quicly_cc_t *cc, picoquic_congestio
     if (sample != NULL) {
         sample->now_us = now_us;
         sample->notification = (uint8_t)q_notification;
-        sample->is_app_limited = (uint8_t)(is_app_limited != 0);
+        sample->is_app_limited = (uint8_t)as->is_app_limited;
         sample->bytes_in_transit = bc->path.bytes_in_transit;
         sample->delivered = bc->path.delivered;
+        sample->rtt_sample_us = bc->path.rtt_sample;
+        sample->smoothed_rtt_us = bc->path.smoothed_rtt;
         sample->cwnd = cc->cwnd;
         sample->pacing_rate = cc->pacing_rate;
         sample->send_quantum = bc->send_quantum;
@@ -395,6 +398,7 @@ void quicly_cc_bbr_log(quicly_conn_t *conn, quicly_cc_t *cc)
         PTLS_LOG_ELEMENT_NUMBER(smoothed_rtt_us, s->smoothed_rtt_us);
         PTLS_LOG_ELEMENT_NUMBER(bytes_acked, s->bytes_acked);
         PTLS_LOG_ELEMENT_NUMBER(bytes_lost, s->bytes_lost);
+        PTLS_LOG_ELEMENT_NUMBER(newly_lost, s->newly_lost);
         PTLS_LOG_ELEMENT_NUMBER(delivered_since_sent, s->delivered_since_sent);
         PTLS_LOG_ELEMENT_NUMBER(lost_since_sent, s->lost_since_sent);
         PTLS_LOG_ELEMENT_NUMBER(inflight_prior, s->inflight_prior);
@@ -465,15 +469,13 @@ static void bbr_on_acked(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t by
 
     quicly_cc_bbr_sample_t *sample = start_sample(bc);
     if (sample != NULL) {
-        sample->rtt_sample_us = rtt_ms_to_us(loss->rtt.latest);
-        sample->smoothed_rtt_us = (uint64_t)(loss->rtt.smoothed * 1000);
         sample->bytes_acked = bytes;
+        sample->newly_lost = as.nb_bytes_newly_lost;
         sample->delivered_since_sent = delivered_since_sent;
         sample->lost_since_sent = lost_since_sent;
         sample->inflight_prior = inflight_prior;
     }
-    notify(bc, cc, picoquic_congestion_notification_acknowledgement, QUICLY_CC_BBR_NOTIFY_ACK, &as, is_app_limited, now_us, now,
-           sample);
+    notify(bc, cc, picoquic_congestion_notification_acknowledgement, QUICLY_CC_BBR_NOTIFY_ACK, &as, now_us, now, sample);
 }
 
 static void bbr_on_lost(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes, uint64_t lost_pn, uint64_t next_pn, double now,
@@ -514,7 +516,7 @@ static void bbr_on_lost(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t byt
         sample->lost_since_sent = bbr_params->lost_since_sent;
         sample->inflight_prior = bbr_params->inflight_prior;
     }
-    notify(bc, cc, picoquic_congestion_notification_repeat, QUICLY_CC_BBR_NOTIFY_REPEAT, &as, 0, now_us, now, sample);
+    notify(bc, cc, picoquic_congestion_notification_repeat, QUICLY_CC_BBR_NOTIFY_REPEAT, &as, now_us, now, sample);
 }
 
 static void bbr_on_sent(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes, uint64_t next_pn, double now, int app_limited)
@@ -539,7 +541,7 @@ static void bbr_on_sent(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t byt
     quicly_cc_bbr_sample_t *sample = start_sample(bc);
     if (sample != NULL)
         sample->inflight_prior = inflight_prior;
-    notify(bc, cc, picoquic_congestion_notification_restart_from_idle, QUICLY_CC_BBR_NOTIFY_RESTART_FROM_IDLE, &as, 1, now_us, now,
+    notify(bc, cc, picoquic_congestion_notification_restart_from_idle, QUICLY_CC_BBR_NOTIFY_RESTART_FROM_IDLE, &as, now_us, now,
            sample);
 }
 
