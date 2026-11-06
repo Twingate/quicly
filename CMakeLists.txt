@@ -162,7 +162,7 @@ ADD_CUSTOM_TARGET(check
          WITH_DTRACE=${WITH_DTRACE} \
          exec prove --exec 'sh -c' -v ${CMAKE_CURRENT_BINARY_DIR}/*.t t/*.t"
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    DEPENDS cli udpfw test.t
+    DEPENDS cli udpfw test.t simulator
     VERBATIM)
 
 IF (CMAKE_SYSTEM_NAME STREQUAL "Linux")
