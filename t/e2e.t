@@ -722,6 +722,18 @@ subtest "huge-CID" => sub {
     ok(!$server->is_dead);
 };
 
+subtest "bbr-events" => sub {
+    my $guard = spawn_server("-C", "bbr", "-e", "$tempdir/bbr-events");
+    my $resp = `$cli -p /10000000 127.0.0.1 $port 2> /dev/null`;
+    is length($resp), 10000000;
+    my $events = slurp_file("$tempdir/bbr-events");
+    like $events, qr/"type":"bbr",.*"state":"probe_bw_/, "BBR left startup";
+    # a bbr row is written just before the quicly event of the same ack or loss, on quicly's clock
+    my @lines = split /\n/, $events;
+    my $mismatches = grep { $lines[$_] =~ /"type":"bbr",.*"time":(\d+),/ && $lines[$_ + 1] !~ /"time":$1,/ } 0 .. $#lines - 1;
+    is $mismatches, 0, "bbr rows share quicly's clock";
+};
+
 done_testing;
 
 sub spawn_server {
