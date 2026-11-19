@@ -373,9 +373,10 @@ immediately for other controllers and when BBR was not notified by that callback
 CE reports usually return early, so no stale rows). `QUICLY_LOG_CONN` reads quicly.c's private
 connection state, so the adapter follows picotls's `PTLS_LOG_CONN` pattern through
 `quicly_get_tls(conn)` and `PTLS_LOG__DO_LOG`; the event carries `conn` and `conn_id` like quicly's
-events, so it joins with them. Fields: `now_us`, `notification`, `bytes_in_transit`, `delivered`,
-`rtt_sample_us`, `smoothed_rtt_us`, `bytes_acked`, `bytes_lost`, `newly_lost`, `delivered_since_sent`,
-`lost_since_sent`, `inflight_prior`, `is_app_limited`, `cwnd`, `pacing_rate`, `send_quantum`,
+events, so it joins with them; `time` is quicly's clock, as in those events. Fields: `now_us`,
+`notification`, `pn`, `bytes_in_transit`, `delivered`, `rtt_sample_us`, `smoothed_rtt_us`,
+`bytes_acked`, `bytes_lost`, `newly_lost`, `delivered_since_sent`, `lost_since_sent`,
+`inflight_prior`, `is_app_limited`, `is_cwnd_limited`, `cwnd`, `pacing_rate`, `send_quantum`,
 `state`, `ack_phase`, `filled_pipe`, `in_recovery`, `packet_conservation`,
 `idle_restart`, `bw`, `bw_estimate`. The old per-connection CSV and its env vars are gone.
 

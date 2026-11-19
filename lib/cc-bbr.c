@@ -70,6 +70,14 @@ typedef struct st_quicly_cc_bbr_sample_t {
      */
     uint8_t is_app_limited;
     /**
+     * value of `is_cwnd_limited` fed to BBR; acks only
+     */
+    uint8_t is_cwnd_limited;
+    /**
+     * the largest newly acked packet on an ack, the lost packet on a loss; 0 on an idle restart
+     */
+    uint64_t pn;
+    /**
      * inputs synced into `picoquic_path_t` / `picoquic_per_ack_state_t`
      */
     uint64_t bytes_in_transit;
@@ -348,6 +356,7 @@ static void notify(quicly_cc_bbr_conn_t *bc, quicly_cc_t *cc, picoquic_congestio
         sample->now_us = now_us;
         sample->notification = (uint8_t)q_notification;
         sample->is_app_limited = (uint8_t)as->is_app_limited;
+        sample->is_cwnd_limited = (uint8_t)as->is_cwnd_limited;
         sample->bytes_in_transit = bc->path.bytes_in_transit;
         sample->delivered = bc->path.delivered;
         sample->rtt_sample_us = bc->path.rtt_sample;
@@ -386,12 +395,15 @@ void quicly_cc_bbr_log(quicly_conn_t *conn, quicly_cc_t *cc)
     if (PTLS_LIKELY(active == 0))
         return;
     const quicly_cc_bbr_sample_t *s = &bc->sample;
-    PTLS_LOG__DO_LOG(quicly, bbr, conn_state, ptls_log_getsni_ptls(tls), 1, {
+    /* `time` is quicly's clock, as QUICLY_LOG_CONN writes it, not picotls's wall clock */
+    PTLS_LOG__DO_LOG(quicly, bbr, conn_state, ptls_log_getsni_ptls(tls), 0, {
+        PTLS_LOG_ELEMENT_NUMBER(time, s->now_us / 1000);
         PTLS_LOG_ELEMENT_PTR(conn, conn);
         if (conn_state->conn_id != 0)
             PTLS_LOG_ELEMENT_NUMBER(conn_id, conn_state->conn_id);
         PTLS_LOG_ELEMENT_NUMBER(now_us, s->now_us);
         PTLS_LOG_ELEMENT_SAFESTR(notification, quicly_cc_bbr_notification_name(s->notification));
+        PTLS_LOG_ELEMENT_NUMBER(pn, s->pn);
         PTLS_LOG_ELEMENT_NUMBER(bytes_in_transit, s->bytes_in_transit);
         PTLS_LOG_ELEMENT_NUMBER(delivered, s->delivered);
         PTLS_LOG_ELEMENT_NUMBER(rtt_sample_us, s->rtt_sample_us);
@@ -403,6 +415,7 @@ void quicly_cc_bbr_log(quicly_conn_t *conn, quicly_cc_t *cc)
         PTLS_LOG_ELEMENT_NUMBER(lost_since_sent, s->lost_since_sent);
         PTLS_LOG_ELEMENT_NUMBER(inflight_prior, s->inflight_prior);
         PTLS_LOG_ELEMENT_BOOL(is_app_limited, s->is_app_limited);
+        PTLS_LOG_ELEMENT_BOOL(is_cwnd_limited, s->is_cwnd_limited);
         PTLS_LOG_ELEMENT_NUMBER(cwnd, s->cwnd);
         PTLS_LOG_ELEMENT_NUMBER(pacing_rate, s->pacing_rate);
         PTLS_LOG_ELEMENT_NUMBER(send_quantum, s->send_quantum);
@@ -469,6 +482,7 @@ static void bbr_on_acked(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t by
 
     quicly_cc_bbr_sample_t *sample = start_sample(bc);
     if (sample != NULL) {
+        sample->pn = largest_acked;
         sample->bytes_acked = bytes;
         sample->newly_lost = as.nb_bytes_newly_lost;
         sample->delivered_since_sent = delivered_since_sent;
@@ -511,6 +525,7 @@ static void bbr_on_lost(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t byt
 
     quicly_cc_bbr_sample_t *sample = start_sample(bc);
     if (sample != NULL) {
+        sample->pn = lost_pn;
         sample->bytes_lost = bytes;
         sample->delivered_since_sent = bbr_params->delivered_since_sent;
         sample->lost_since_sent = bbr_params->lost_since_sent;
