@@ -197,6 +197,10 @@ static int cubic_on_switch(quicly_cc_t *cc)
             cubic_reset(cc, cc->cwnd_initial, cc->conf);
         }
         return 1;
+    } else if (cc->type == &quicly_cc_type_bbr) {
+        /* quicly_set_cc frees BBR's state afterwards; start from the initial window */
+        cubic_reset(cc, cc->cwnd_initial, cc->conf);
+        return 1;
     }
 
     return 0;
