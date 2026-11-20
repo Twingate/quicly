@@ -247,6 +247,10 @@ typedef struct st_quicly_cc_t {
      */
     uint32_t ssthresh;
     /**
+     * Controller-supplied pacing rate in bytes per millisecond; 0 means derive it from cwnd/SRTT.
+     */
+    uint32_t pacing_rate;
+    /**
      * Packet number indicating end of recovery period, if in recovery.
      */
     uint64_t recovery_end;
@@ -451,6 +455,19 @@ struct st_quicly_cc_type_t {
      * [optional] updates whether the sender is CC-limited
      */
     void (*cc_update_cc_limited)(quicly_cc_t *cc, int cc_limited, double now);
+    /**
+     * [optional] Called when the controller is released, to free any state it allocated.
+     */
+    void (*cc_dispose)(quicly_cc_t *cc);
+    /**
+     * If set, the pacer is enabled regardless of quicly_context_t::egress[].pacing. quicly_set_cc
+     * does not allocate one, so such a controller must refuse to be switched into.
+     */
+    uint8_t requires_pacing : 1;
+    /**
+     * If set, cc_on_acked is also called for an ACK with 0 bytes (duplicate ACKs are still ignored).
+     */
+    uint8_t wants_zero_byte_acks : 1;
 };
 
 /**

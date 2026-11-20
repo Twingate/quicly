@@ -537,8 +537,8 @@ From an adversarial four-model review of the whole stack, verified, not yet fixe
    loopback). Now one restart per pause, none mid-transfer. A restart that ends ProbeRTT
    starts a round; `cc_on_sent` now carries `next_pn` for it (it used to reuse the last ACK's).
 2. **[FIXED] `quicly_set_cc` disposed before knowing the switch worked.** It now keeps a copy of
-   `egress.cc`, switches, and disposes the copy only on success. A test switching a live
-   connection to BBR, to a refusing controller, then to pico segfaulted before and passes now.
+   `egress.cc`, switches, and disposes the copy only on success. `set_cc_dispose` in
+   `t/test.c` covers a same-type switch, a refused switch, a type change and teardown.
 3. **[FIXED] Late ACKs over-undid loss episodes.** picoquic undoes a spurious loss only in PTO
    recovery, which the adapter never enters, so BBR never undoes an episode. The late-ack handler
    was a no-op and is gone (`cc_on_late_ack` is NULL), and `num_loss_episodes` counts the episodes
