@@ -551,7 +551,8 @@ static uint32_t calc_bytes_per_mtu_increase(quicly_cc_t *cc, const quicly_loss_t
 }
 
 static void pico_on_acked(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes, uint64_t largest_acked, uint32_t inflight,
-                          int cc_limited, uint64_t next_pn, double now, uint32_t max_udp_payload_size)
+                          int cc_limited, uint64_t next_pn, double now, uint32_t max_udp_payload_size,
+                          const quicly_cc_bbr_ack_params_t *bbr_params)
 {
     assert(inflight >= bytes);
 
@@ -657,7 +658,7 @@ Cleanup:
 }
 
 static void pico_on_lost(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes, uint64_t lost_pn, uint64_t next_pn, double now,
-                         uint32_t max_udp_payload_size)
+                         uint32_t max_udp_payload_size, const quicly_cc_bbr_loss_params_t *bbr_params)
 {
     quicly_cc__update_ecn_episodes(cc, bytes, lost_pn);
 
@@ -679,7 +680,7 @@ static void pico_on_lost(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t by
      * exit to Rapid Start and related states, before entering the next recovery period in the following blocks. */
     if (quicly_cc_rapid_start_is_in_first_recovery(&cc->rapid_start))
         pico_on_acked(cc, loss, 0, cc->recovery_end, (uint32_t)loss->sentmap.bytes_in_flight, 0, next_pn, now,
-                      max_udp_payload_size);
+                      max_udp_payload_size, NULL);
 
     double beta =
         cc->type == &quicly_cc_type_reno ? QUICLY_BETA_RENO : (QUICLY_USE_ABE && bytes == 0 ? QUICLY_BETA_ECN : QUICLY_BETA_LOSS);
@@ -858,7 +859,7 @@ static void pico_on_late_ack(quicly_cc_t *cc, uint64_t pn, double now)
     }
 }
 
-static void pico_on_sent(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes, double now)
+static void pico_on_sent(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes, uint64_t next_pn, double now, int app_limited)
 {
     /* Unused */
 }

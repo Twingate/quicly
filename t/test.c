@@ -1217,23 +1217,37 @@ static void test_set_cc(void)
 /* stub controllers with a fixed cwnd, recording what quicly calls */
 static size_t stub_num_disposed;
 static size_t stub_num_zero_byte_acks;
+static uint32_t stub_sent[8];
+static size_t stub_num_sent;
+static uint32_t stub_acked_bytes;
+static quicly_cc_bbr_ack_params_t stub_ack_params;
+static quicly_cc_bbr_loss_params_t stub_loss_params;
 static quicly_cc_t *stub_live_cc;
 static int stub_disposed_live_cc;
 
 static void stub_on_acked(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes, uint64_t largest_acked, uint32_t inflight,
-                          int cc_limited, uint64_t next_pn, double now, uint32_t max_udp_payload_size)
+                          int cc_limited, uint64_t next_pn, double now, uint32_t max_udp_payload_size,
+                          const quicly_cc_bbr_ack_params_t *bbr_params)
 {
-    if (bytes == 0)
+    if (bytes == 0) {
         ++stub_num_zero_byte_acks;
+        return;
+    }
+    stub_acked_bytes = bytes;
+    stub_ack_params = *bbr_params;
 }
 
 static void stub_on_lost(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes, uint64_t lost_pn, uint64_t next_pn, double now,
-                         uint32_t max_udp_payload_size)
+                         uint32_t max_udp_payload_size, const quicly_cc_bbr_loss_params_t *bbr_params)
 {
+    if (bbr_params != NULL)
+        stub_loss_params = *bbr_params;
 }
 
-static void stub_on_sent(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes, double now)
+static void stub_on_sent(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes, uint64_t next_pn, double now, int app_limited)
 {
+    if (stub_num_sent < PTLS_ELEMENTSOF(stub_sent))
+        stub_sent[stub_num_sent++] = bytes;
 }
 
 static void stub_dispose(quicly_cc_t *cc)
@@ -1434,6 +1448,23 @@ static void send_ack_only(quicly_conn_t *conn, quicly_conn_t *peer)
     ok(transmit(conn, peer) == 1);
 }
 
+/* sends four packets of stream data, withholding the first, which three ACKs will declare lost */
+static void send_first_withheld(quicly_conn_t *conn, quicly_conn_t *peer, struct iovec *first, uint8_t *firstbuf)
+{
+    quicly_stream_t *stream;
+    ok(quicly_open_stream(conn, &stream, 0) == 0);
+    quicly_address_t dest;
+    quicly_address_t src;
+    size_t num_datagrams = 1;
+    ok(quicly_streambuf_egress_write(stream, "a", 1) == 0);
+    ok(quicly_send(conn, &dest, &src, first, &num_datagrams, firstbuf, quic_ctx.transport_params.max_udp_payload_size) == 0);
+    ok(num_datagrams == 1);
+    for (int i = 0; i != 3; ++i) {
+        ok(quicly_streambuf_egress_write(stream, "b", 1) == 0);
+        ok(transmit(conn, peer) == 1);
+    }
+}
+
 static void do_test_zero_byte_acks(quicly_cc_type_t *type)
 {
     int wants_zero_byte_acks = type->wants_zero_byte_acks;
@@ -1452,6 +1483,19 @@ static void do_test_zero_byte_acks(quicly_cc_type_t *type)
     send_ack_only(server, client);
     ok(stub_num_zero_byte_acks == (wants_zero_byte_acks ? 1 : 0));
 
+    /* an ACK newly acknowledging only a packet already declared lost: a late ack, not a zero-byte ack */
+    struct iovec lost;
+    uint8_t lostbuf[quic_ctx.transport_params.max_udp_payload_size];
+    send_first_withheld(client, server, &lost, lostbuf);
+    send_ack_only(server, client);
+    ok(client->super.stats.num_packets.lost == 1);
+    quicly_decoded_packet_t decoded;
+    ok(decode_packets(&decoded, &lost, 1) == 1);
+    ok(quicly_receive(server, NULL, &fake_address.sa, &decoded) == 0);
+    send_ack_only(server, client);
+    ok(client->super.stats.num_packets.late_acked == 1);
+    ok(stub_num_zero_byte_acks == (wants_zero_byte_acks ? 1 : 0));
+
     quicly_free(client);
     quicly_free(server);
 }
@@ -1460,6 +1504,43 @@ static void test_zero_byte_acks(void)
 {
     subtest("wanted", do_test_zero_byte_acks, &stub_type_acks);
     subtest("unwanted", do_test_zero_byte_acks, &stub_type_no_acks);
+}
+
+static void test_cc_send_time_inputs(void)
+{
+    quicly_conn_t *client;
+    quicly_conn_t *server;
+    test_setup_connected_peers(&client, &server);
+    ok(quicly_set_cc(client, &stub_type_acks));
+    ok(client->egress.loss.sentmap.bytes_in_flight == 0);
+    /* the packets keep the low 32 bits of these totals, which wrap before the ACK */
+    client->egress.delivery.delivered = UINT32_MAX - 10;
+    client->egress.delivery.lost = UINT32_MAX - 20;
+    stub_num_sent = 0;
+
+    struct iovec lost;
+    uint8_t lostbuf[quic_ctx.transport_params.max_udp_payload_size];
+    send_first_withheld(client, server, &lost, lostbuf);
+    ok(stub_num_sent == 4);
+    uint32_t a = stub_sent[0];
+    uint32_t b = stub_sent[1];
+    uint32_t c = stub_sent[2];
+    uint32_t d = stub_sent[3];
+    ok(a > 20 && b + c + d > 10);
+
+    /* the controller hears of the ACK of b, c and d, then of a, which that ACK declares lost */
+    send_ack_only(server, client);
+    ok(client->super.stats.num_packets.lost == 1);
+    ok(stub_acked_bytes == b + c + d);
+    ok(stub_ack_params.delivered_since_sent == b + c + d);
+    ok(stub_ack_params.lost_since_sent == 0);
+    ok(stub_ack_params.inflight_prior == a + b + c);
+    ok(stub_loss_params.delivered_since_sent == b + c + d);
+    ok(stub_loss_params.lost_since_sent == a);
+    ok(stub_loss_params.inflight_prior == 0);
+
+    quicly_free(client);
+    quicly_free(server);
 }
 
 static void test_setup_send_context(quicly_conn_t *conn, quicly_send_context_t *s, struct iovec *datagram, void *buf,
@@ -2362,6 +2443,7 @@ int main(int argc, char **argv)
     subtest("set_cc", test_set_cc);
     subtest("set_cc_dispose", test_set_cc_dispose);
     subtest("zero_byte_acks", test_zero_byte_acks);
+    subtest("cc_send_time_inputs", test_cc_send_time_inputs);
     subtest("cc-accel-context", test_cc_accel_context);
     subtest("ecn-index-from-bits", test_ecn_index_from_bits);
     subtest("resume-sendrate", test_resume_sendrate);
