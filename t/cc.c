@@ -1631,8 +1631,248 @@ static void test_rapid_start_fractional_rtt(void)
     ok(!quicly_cc_rapid_start_use_3x(&rs, &rtt)); /* the lower fractional sample has expired */
 }
 
+/* Drives BBR one round trip at a time: send a window, then deliver its acks and losses in order at
+ * the link rate, passing the snapshot inputs quicly would. */
+typedef struct st_bbr_sim_t {
+    quicly_cc_t cc;
+    quicly_loss_t loss;
+    uint32_t mtu;
+    double now;       /* ms */
+    double link_rate; /* bytes per ms */
+    double base_rtt;  /* ms */
+    uint64_t next_pn;
+    uint64_t delivered;
+    uint64_t lost;
+    uint64_t ecn_counts[3]; /* ECT(0), ECT(1) and CE as the peer reports them */
+    int mark_ce;            /* the bottleneck marks every other packet CE */
+} bbr_sim_t;
+
+#define BBR_SIM_MAX_PACKETS 4096
+#define BBR_IDLE_RESTART(w) (((w) >> 20) & 1) /* bit 20 of picoquic_bbr_observe()'s word */
+
+static void bbr_sim_init(bbr_sim_t *sim, double link_rate, double base_rtt)
+{
+    *sim = (bbr_sim_t){.mtu = 1200, .now = 1000, .link_rate = link_rate, .base_rtt = base_rtt, .next_pn = 1};
+    sim->loss.rtt.latest = base_rtt;
+    sim->loss.rtt.smoothed = base_rtt;
+    sim->loss.rtt.minimum = base_rtt;
+    quicly_cc_bbr_init.cb(&quicly_cc_bbr_init, &sim->cc, TEST_CC_CONF(10, 0, 0, 0), sim->mtu, sim->now);
+}
+
+static const char *bbr_sim_state(bbr_sim_t *sim)
+{
+    return quicly_cc_bbr_state_name(QUICLY_CC_BBR_OBSERVED_STATE(sim->cc.state.bbr.cc_state));
+}
+
+/* Sends one window and processes it. `lose[i]` marks the i-th packet as lost. Returns the number of packets sent. */
+static size_t bbr_sim_round(bbr_sim_t *sim, const uint8_t *lose)
+{
+    struct {
+        uint64_t pn;
+        double sent_at;
+        uint64_t delivered_prior;
+        uint64_t lost_prior;
+        uint64_t inflight_prior;
+    } pkts[BBR_SIM_MAX_PACKETS];
+    size_t n = sim->cc.cwnd / sim->mtu;
+    if (n > BBR_SIM_MAX_PACKETS)
+        n = BBR_SIM_MAX_PACKETS;
+
+    for (size_t i = 0; i < n; ++i) {
+        pkts[i].pn = sim->next_pn++;
+        pkts[i].sent_at = sim->now;
+        pkts[i].delivered_prior = sim->delivered;
+        pkts[i].lost_prior = sim->lost;
+        pkts[i].inflight_prior = sim->loss.sentmap.bytes_in_flight;
+        sim->loss.sentmap.bytes_in_flight += sim->mtu;
+        sim->cc.type->cc_on_sent(&sim->cc, &sim->loss, sim->mtu, sim->next_pn, sim->now, 0);
+    }
+
+    /* the window drains at the link rate, or arrives within one RTT if it is below it */
+    double window_rate = (double)n * sim->mtu / sim->base_rtt;
+    double rate = window_rate < sim->link_rate ? window_rate : sim->link_rate;
+    double at = sim->now + sim->base_rtt;
+    for (size_t i = 0; i < n; ++i) {
+        at += sim->mtu / rate;
+        sim->loss.sentmap.bytes_in_flight -= sim->mtu;
+        sim->loss.rtt.latest = (float)(at - pkts[i].sent_at);
+        sim->loss.rtt.smoothed = sim->loss.rtt.latest;
+        if (lose != NULL && lose[i]) {
+            sim->lost += sim->mtu;
+            quicly_cc_bbr_loss_params_t params = {.delivered_since_sent = sim->delivered - pkts[i].delivered_prior,
+                                                  .inflight_prior = pkts[i].inflight_prior,
+                                                  .lost_since_sent = sim->lost - pkts[i].lost_prior};
+            sim->cc.type->cc_on_lost(&sim->cc, &sim->loss, sim->mtu, pkts[i].pn, sim->next_pn, at, sim->mtu, &params);
+        } else {
+            sim->delivered += sim->mtu;
+            ++sim->ecn_counts[sim->mark_ce && i % 2 != 0 ? 2 : 0];
+            quicly_cc_bbr_ack_params_t params = {.delivered_since_sent = sim->delivered - pkts[i].delivered_prior,
+                                                 .inflight_prior = pkts[i].inflight_prior,
+                                                 .lost_since_sent = sim->lost - pkts[i].lost_prior,
+                                                 .bandwidth_estimate = (uint64_t)(rate * 1000)};
+            memcpy(params.ecn_counts, sim->ecn_counts, sizeof(params.ecn_counts));
+            sim->cc.type->cc_on_acked(&sim->cc, &sim->loss, sim->mtu, pkts[i].pn, (uint32_t)sim->loss.sentmap.bytes_in_flight, 1,
+                                      sim->next_pn, at, sim->mtu, &params);
+        }
+    }
+    sim->now = at;
+    return n;
+}
+
+static void test_bbr_lifecycle(void)
+{
+    bbr_sim_t sim;
+    bbr_sim_init(&sim, 10000, 20);
+
+    ok(sim.cc.type == &quicly_cc_type_bbr);
+    ok(sim.cc.type->requires_pacing);
+    ok(sim.cc.cwnd == 10 * sim.mtu);
+    ok(strcmp(bbr_sim_state(&sim), "startup") == 0);
+    ok(sim.cc.state.bbr.startups == 1);
+    ok(sim.cc.state.bbr.path != NULL);
+
+    sim.cc.type->cc_dispose(&sim.cc);
+    ok(sim.cc.state.bbr.path == NULL);
+}
+
+static void test_bbr_startup_plateau(void)
+{
+    bbr_sim_t sim;
+    bbr_sim_init(&sim, 10000, 20); /* 10 MB/s, 20 ms: BDP 200 KB */
+
+    /* Startup paces well above the rate it measures, and the rate reaches quicly's pacer */
+    bbr_sim_round(&sim, NULL);
+    double measured = 10. * sim.mtu / sim.base_rtt;
+    ok(strcmp(bbr_sim_state(&sim), "startup") == 0);
+    ok(sim.cc.pacing_rate > 2 * measured);
+
+    /* growth stops at the link rate, so Startup ends on the plateau */
+    size_t round;
+    for (round = 0; round < 20 && strcmp(bbr_sim_state(&sim), "startup") == 0; ++round)
+        bbr_sim_round(&sim, NULL);
+    ok(round < 20);
+    ok(sim.cc.state.bbr.bw > 0.9 * sim.link_rate * 1000 && sim.cc.state.bbr.bw < 1.1 * sim.link_rate * 1000);
+
+    /* after Drain it paces close to the link rate with a window of at least the BDP */
+    for (round = 0; round < 10; ++round)
+        bbr_sim_round(&sim, NULL);
+    ok(strncmp(bbr_sim_state(&sim), "probe_bw", 8) == 0);
+    ok(sim.cc.pacing_rate > 0.7 * sim.link_rate && sim.cc.pacing_rate < 1.3 * sim.link_rate);
+    ok(sim.cc.cwnd >= sim.link_rate * sim.base_rtt);
+
+    sim.cc.type->cc_dispose(&sim.cc);
+}
+
+/* Loses `count` packets of the fourth round, spread out or back to back, and returns BBR's state after the next round. */
+static const char *bbr_startup_after_loss(bbr_sim_t *sim, size_t count, int spread)
+{
+    uint8_t lose[BBR_SIM_MAX_PACKETS] = {0};
+
+    bbr_sim_init(sim, 1000000, 20); /* fast enough that the delivery rate keeps growing through Startup */
+    for (int round = 0; round < 3; ++round)
+        bbr_sim_round(sim, NULL);
+    size_t n = sim->cc.cwnd / sim->mtu;
+    for (size_t i = 0; i < count; ++i)
+        lose[spread ? (i + 1) * n / (count + 1) : n / 2 + i] = 1;
+    bbr_sim_round(sim, lose);
+    bbr_sim_round(sim, NULL);
+    return bbr_sim_state(sim);
+}
+
+static void test_bbr_startup_high_loss(void)
+{
+    bbr_sim_t sim;
+
+    /* 8 separate losses (over 2% of the round, at least 6 ranges) end Startup */
+    ok(strcmp(bbr_startup_after_loss(&sim, 8, 1), "startup") != 0);
+    sim.cc.type->cc_dispose(&sim.cc);
+
+    /* the same bytes lost in one range do not */
+    ok(strcmp(bbr_startup_after_loss(&sim, 8, 0), "startup") == 0);
+    sim.cc.type->cc_dispose(&sim.cc);
+}
+
+/* Marks half of the fourth and fifth rounds CE and returns BBR's state after them. */
+static const char *bbr_startup_after_ce(bbr_sim_t *sim, int report_ect1)
+{
+    bbr_sim_init(sim, 1000000, 20);
+    for (int round = 0; round < 3; ++round)
+        bbr_sim_round(sim, NULL);
+    sim->mark_ce = 1;
+    if (report_ect1)
+        sim->ecn_counts[1] = 1;
+    bbr_sim_round(sim, NULL);
+    bbr_sim_round(sim, NULL);
+    return bbr_sim_state(sim);
+}
+
+static void test_bbr_ecn(void)
+{
+    bbr_sim_t sim;
+
+    /* a CE share over 20% ends Startup */
+    ok(strcmp(bbr_startup_after_ce(&sim, 0), "startup") != 0);
+    sim.cc.type->cc_dispose(&sim.cc);
+
+    /* quicly turns ECN off when the peer reports ECT(1), so BBR ignores the counts too */
+    ok(strcmp(bbr_startup_after_ce(&sim, 1), "startup") == 0);
+    sim.cc.type->cc_dispose(&sim.cc);
+}
+
+static void test_bbr_no_rtt_sample(void)
+{
+    bbr_sim_t sim;
+    bbr_sim_init(&sim, 10000, 20);
+
+    /* on a new path, acks whose largest packet is ACK-only take no RTT sample, so rtt.latest stays
+     * 0; enough of them would fill BBR's 7-slot RTT jitter buffer */
+    sim.loss.rtt.latest = 0;
+    quicly_cc_bbr_ack_params_t params = {0};
+    for (int i = 0; i < 8; ++i) {
+        sim.now += 2;
+        sim.cc.type->cc_on_acked(&sim.cc, &sim.loss, 0, 0, 0, 1, sim.next_pn, sim.now, sim.mtu, &params);
+    }
+
+    /* it must not become BBR's min RTT, which would hold cwnd under the BDP */
+    for (int round = 0; round < 20; ++round)
+        bbr_sim_round(&sim, NULL);
+    ok(sim.cc.cwnd >= sim.link_rate * sim.base_rtt);
+
+    sim.cc.type->cc_dispose(&sim.cc);
+}
+
+static void test_bbr_restart_from_idle(void)
+{
+    bbr_sim_t sim;
+    bbr_sim_init(&sim, 10000, 20);
+    for (int round = 0; round < 20; ++round)
+        bbr_sim_round(&sim, NULL);
+    const char *state = bbr_sim_state(&sim);
+    uint32_t cwnd = sim.cc.cwnd;
+    sim.now += 1000;
+
+    /* a send that is not app-limited is not a restart */
+    sim.loss.sentmap.bytes_in_flight = sim.mtu;
+    sim.cc.type->cc_on_sent(&sim.cc, &sim.loss, sim.mtu, sim.next_pn, sim.now, 0);
+    ok(!BBR_IDLE_RESTART(sim.cc.state.bbr.cc_state));
+
+    /* the first app-limited send with nothing else in flight restarts from idle without leaving the state */
+    sim.cc.type->cc_on_sent(&sim.cc, &sim.loss, sim.mtu, sim.next_pn, sim.now, 1);
+    ok(BBR_IDLE_RESTART(sim.cc.state.bbr.cc_state));
+    ok(strcmp(bbr_sim_state(&sim), state) == 0);
+    ok(sim.cc.cwnd == cwnd);
+
+    sim.cc.type->cc_dispose(&sim.cc);
+}
+
 void test_cc(void)
 {
+    subtest("bbr-lifecycle", test_bbr_lifecycle);
+    subtest("bbr-startup-plateau", test_bbr_startup_plateau);
+    subtest("bbr-startup-high-loss", test_bbr_startup_high_loss);
+    subtest("bbr-restart-from-idle", test_bbr_restart_from_idle);
+    subtest("bbr-ecn", test_bbr_ecn);
+    subtest("bbr-no-rtt-sample", test_bbr_no_rtt_sample);
     subtest("fast-cbrt", test_fast_cbrt);
     subtest("rapid-start", test_rapid_start);
     subtest("abba", test_abba);
