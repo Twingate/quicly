@@ -153,7 +153,7 @@ QUICLY_CALLBACK_TYPE(quicly_error_t, generate_resumption_token, quicly_conn_t *c
 /**
  * called to initialize a congestion controller for a new connection or path.
  */
-QUICLY_CALLBACK_TYPE(void, init_cc, quicly_cc_t *cc, const quicly_cc_conf_t *conf, uint16_t max_udp_payload_size, int64_t now);
+QUICLY_CALLBACK_TYPE(void, init_cc, quicly_cc_t *cc, const quicly_cc_conf_t *conf, uint16_t max_udp_payload_size, double now);
 /**
  * reference counting.
  * delta must be either 1 or -1.

@@ -423,18 +423,18 @@ struct st_quicly_cc_type_t {
      * Called when a packet is newly acknowledged.
      */
     void (*cc_on_acked)(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes, uint64_t largest_acked, uint32_t inflight,
-                        int cc_limited, uint64_t next_pn, int64_t now, uint32_t max_udp_payload_size);
+                        int cc_limited, uint64_t next_pn, double now, uint32_t max_udp_payload_size);
     /**
      * Called when a packet is detected as lost.
      * @param bytes    bytes declared lost, or zero iff ECN_CE is observed
      * @param next_pn  the next unsent packet number, used for setting the recovery window
      */
-    void (*cc_on_lost)(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes, uint64_t lost_pn, uint64_t next_pn, int64_t now,
+    void (*cc_on_lost)(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes, uint64_t lost_pn, uint64_t next_pn, double now,
                        uint32_t max_udp_payload_size);
     /**
      * Called after a packet is sent.
      */
-    void (*cc_on_sent)(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes, int64_t now);
+    void (*cc_on_sent)(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes, double now);
     /**
      * Switches the underlying algorithm of `cc` to that of `cc_switch`, returning a boolean whether the operation was successful.
      */
@@ -442,7 +442,7 @@ struct st_quicly_cc_type_t {
     /**
      * [optional] Called when a packet previously detected as lost is later acknowledged.
      */
-    void (*cc_on_late_ack)(quicly_cc_t *cc, uint64_t pn, int64_t now);
+    void (*cc_on_late_ack)(quicly_cc_t *cc, uint64_t pn, double now);
     /**
      * [optional] called by quicly to enter jumpstart.
      */
@@ -450,7 +450,7 @@ struct st_quicly_cc_type_t {
     /**
      * [optional] updates whether the sender is CC-limited
      */
-    void (*cc_update_cc_limited)(quicly_cc_t *cc, int cc_limited, int64_t now);
+    void (*cc_update_cc_limited)(quicly_cc_t *cc, int cc_limited, double now);
 };
 
 /**
@@ -490,7 +490,7 @@ static void quicly_cc_jumpstart_on_first_loss(quicly_cc_t *cc, uint64_t lost_pn,
 /**
  * Initializes the heuristics needed to determine if slow start needs to be acclerated (i.e., 3x).
  */
-static void quicly_cc_init_rapid_start(struct st_quicly_cc_rapid_start_t *rs, int64_t now);
+static void quicly_cc_init_rapid_start(struct st_quicly_cc_rapid_start_t *rs, double now);
 /**
  * If Rapid Start is currently affecting congestion control.
  */
@@ -605,7 +605,7 @@ inline void quicly_cc_jumpstart_on_first_loss(quicly_cc_t *cc, uint64_t lost_pn,
     }
 }
 
-inline void quicly_cc_init_rapid_start(struct st_quicly_cc_rapid_start_t *rs, int64_t now)
+inline void quicly_cc_init_rapid_start(struct st_quicly_cc_rapid_start_t *rs, double now)
 {
     (void)now;
     rs->state = QUICLY_CC_RAPID_START_STATE_PROBING;

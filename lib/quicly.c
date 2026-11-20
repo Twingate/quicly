@@ -1604,9 +1604,9 @@ static void update_rate_limit(quicly_conn_t *conn, int has_sendable_data, int se
          * that state by itself. This keeps Cubic's clock running while a bulk sender refills the window without letting small paced
          * bursts advance the clock. */
         if (!get_egress_context(conn)->respect_app_limited || is_cwnd_limited) {
-            conn->egress.cc.type->cc_update_cc_limited(&conn->egress.cc, 1, conn->stash.now);
+            conn->egress.cc.type->cc_update_cc_limited(&conn->egress.cc, 1, conn->stash.now_double);
         } else if (!is_ratemeter_limited) {
-            conn->egress.cc.type->cc_update_cc_limited(&conn->egress.cc, 0, conn->stash.now);
+            conn->egress.cc.type->cc_update_cc_limited(&conn->egress.cc, 0, conn->stash.now_double);
         }
     }
 }
@@ -2170,7 +2170,7 @@ static quicly_error_t promote_path(quicly_conn_t *conn, size_t path_index)
 
     /* reset CC (FIXME flush sentmap and reset loss recovery) */
     conn->egress.cc.type->cc_init->cb(conn->egress.cc.type->cc_init, &conn->egress.cc, &get_egress_context(conn)->cc,
-                                      conn->egress.max_udp_payload_size, conn->stash.now);
+                                      conn->egress.max_udp_payload_size, conn->stash.now_double);
 
     /* set jumpstart target */
     calc_resume_sendrate(conn, &conn->super.stats.jumpstart.prev_rate, &conn->super.stats.jumpstart.prev_rtt);
@@ -2881,7 +2881,7 @@ static quicly_conn_t *create_connection(quicly_context_t *ctx, uint32_t protocol
     conn->egress.send_ack_at = INT64_MAX;
     conn->egress.send_probe_at = INT64_MAX;
     get_egress_context(conn)->cc.init_cc->cb(get_egress_context(conn)->cc.init_cc, &conn->egress.cc, &get_egress_context(conn)->cc,
-                                             ctx->transport_params.max_udp_payload_size, conn->stash.now);
+                                             ctx->transport_params.max_udp_payload_size, conn->stash.now_double);
     if (pacer != NULL) {
         conn->egress.pacer = pacer;
         quicly_pacer_reset(conn->egress.pacer);
@@ -4003,7 +4003,8 @@ static quicly_error_t commit_send_packet(quicly_conn_t *conn, quicly_send_contex
 
     if (packet_bytes_in_flight != 0) {
         assert(s->path_index == 0 && "CC governs path 0 and data is sent only on that path");
-        conn->egress.cc.type->cc_on_sent(&conn->egress.cc, &conn->egress.loss, (uint32_t)packet_bytes_in_flight, conn->stash.now);
+        conn->egress.cc.type->cc_on_sent(&conn->egress.cc, &conn->egress.loss, (uint32_t)packet_bytes_in_flight,
+                                         conn->stash.now_double);
         if (conn->egress.pacer != NULL)
             quicly_pacer_consume_window(conn->egress.pacer, packet_bytes_in_flight);
     }
@@ -4722,7 +4723,7 @@ static void notify_congestion_to_cc(quicly_conn_t *conn, uint16_t lost_bytes, ui
 {
     if (conn->egress.pn_path_start <= lost_pn) {
         conn->egress.cc.type->cc_on_lost(&conn->egress.cc, &conn->egress.loss, lost_bytes, lost_pn, conn->egress.packet_number,
-                                         conn->stash.now, conn->egress.max_udp_payload_size);
+                                         conn->stash.now_double, conn->egress.max_udp_payload_size);
         QUICLY_PROBE(CC_CONGESTION, conn, conn->stash.now, lost_pn + 1, conn->egress.loss.sentmap.bytes_in_flight,
                      conn->egress.cc.cwnd);
         QUICLY_LOG_CONN(cc_congestion, conn, {
@@ -6397,7 +6398,7 @@ static quicly_error_t handle_ack_frame(quicly_conn_t *conn, struct st_quicly_han
                     largest_late_acked = pn_acked;
                     ++conn->super.stats.num_packets.late_acked;
                     if (conn->egress.pn_path_start <= pn_acked && conn->egress.cc.type->cc_on_late_ack != NULL)
-                        conn->egress.cc.type->cc_on_late_ack(&conn->egress.cc, pn_acked, conn->stash.now);
+                        conn->egress.cc.type->cc_on_late_ack(&conn->egress.cc, pn_acked, conn->stash.now_double);
                 }
             }
             ++conn->super.stats.num_packets.ack_received;
@@ -6462,7 +6463,7 @@ static quicly_error_t handle_ack_frame(quicly_conn_t *conn, struct st_quicly_han
     if (bytes_acked > 0) {
         conn->egress.cc.type->cc_on_acked(&conn->egress.cc, &conn->egress.loss, (uint32_t)bytes_acked, frame.largest_acknowledged,
                                           (uint32_t)(conn->egress.loss.sentmap.bytes_in_flight + bytes_acked), cc_limited,
-                                          conn->egress.packet_number, conn->stash.now, conn->egress.max_udp_payload_size);
+                                          conn->egress.packet_number, conn->stash.now_double, conn->egress.max_udp_payload_size);
         QUICLY_PROBE(QUICTRACE_CC_ACK, conn, conn->stash.now, &conn->egress.loss.rtt, conn->egress.cc.cwnd,
                      conn->egress.loss.sentmap.bytes_in_flight);
     }
