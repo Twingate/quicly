@@ -1543,6 +1543,96 @@ static void test_cc_send_time_inputs(void)
     quicly_free(server);
 }
 
+/* bytes acked while each packet in test_delivery_rate is in flight; the cases vary only the times */
+#define DELIVERED_SINCE_SENT 50000
+
+/* sample_delivery_rate for a packet sent at `sent_at` and acked at `now` with DELIVERED_SINCE_SENT
+ * bytes acked meanwhile, sent when the latest ack had come at `ack_prior` for a packet sent at
+ * `sent_prior` (ms) */
+static uint64_t delivery_rate_at(quicly_conn_t *conn, double sent_at, double now, double ack_prior, double sent_prior)
+{
+    quicly_sent_packet_t sent = {.sent_at = sent_at,
+                                 .delivered_prior = (uint32_t)conn->egress.delivery.delivered - DELIVERED_SINCE_SENT,
+                                 .delivered_time_prior_us = delivery_time_us(ack_prior),
+                                 .delivered_sent_time_prior_us = delivery_time_us(sent_prior)};
+    conn->stash.now_double = now;
+    return sample_delivery_rate(conn, &sent);
+}
+
+static void test_delivery_rate(void)
+{
+    quicly_conn_t *conn;
+    ok(quicly_connect(&conn, &quic_ctx, "example.com", &fake_address.sa, NULL, new_master_id(), ptls_iovec_init(NULL, 0), NULL,
+                      NULL, NULL) == 0);
+    conn->egress.loss.rtt.minimum = 10;
+    conn->egress.delivery.delivered = 1000000;
+    conn->egress.delivery.delivered_sent_time_us = 0;
+
+    /* the acks spread over 30 ms, the sends over 15 ms: the ack interval governs */
+    ok(delivery_rate_at(conn, 1000, 1020, 990, 985) == DELIVERED_SINCE_SENT * 1000 / 30);
+    ok(conn->egress.delivery.delivered_sent_time_us == 1000000);
+    ok(conn->egress.delivery.delivered_time_us == 1020000);
+
+    /* the sends spread over 40 ms: the send interval governs */
+    ok(delivery_rate_at(conn, 1010, 1020, 990, 970) == DELIVERED_SINCE_SENT * 1000 / 40);
+
+    /* an interval under the 10 ms min RTT gives no sample, but moves the references on; the ack
+     * interval is at least the packet's own round trip, so only inconsistent times get here */
+    ok(delivery_rate_at(conn, 1030, 1035, 1028, 1027) == 0);
+    ok(conn->egress.delivery.delivered_sent_time_us == 1030000);
+    ok(conn->egress.delivery.delivered_time_us == 1035000);
+
+    /* a packet sent before the last sampled one, acked late, gives no sample */
+    ok(delivery_rate_at(conn, 1025, 1060, 990, 970) == 0);
+    ok(conn->egress.delivery.delivered_sent_time_us == 1030000);
+    ok(conn->egress.delivery.delivered_time_us == 1060000);
+
+    /* an ack-clocked packet, sent as an ack arrived, whose round trip set the 0.127 ms min RTT: the
+     * interval equals the min RTT, but cut to whole microseconds it comes out at 126 us, under the
+     * float threshold of 127.000004 */
+    conn->egress.loss.rtt.minimum = 0.127f;
+    double clocked = 2000.003;
+    uint32_t interval = delivery_time_us(clocked + 0.127) - delivery_time_us(clocked);
+    ok(interval == 126);
+    ok(delivery_rate_at(conn, clocked, clocked + 0.127, clocked, clocked - 0.1) == DELIVERED_SINCE_SENT * 1000000ull / interval);
+
+    /* the microsecond times wrap at 2^32 us (4294967.296 ms) just before the packet is sent */
+    double sent_at = 4294968.25;
+    conn->egress.delivery.delivered_sent_time_us = delivery_time_us(sent_at - 15);
+    ok(delivery_rate_at(conn, sent_at, sent_at + 29, sent_at - 1, sent_at - 5) == DELIVERED_SINCE_SENT * 1000 / 30);
+    ok(conn->egress.delivery.delivered_sent_time_us == 954);
+    ok(conn->egress.delivery.delivered_time_us == 29954);
+
+    quicly_free(conn);
+}
+
+#undef DELIVERED_SINCE_SENT
+
+static void test_delivery_rate_after_idle(void)
+{
+    quicly_conn_t *client;
+    quicly_conn_t *server;
+    test_setup_connected_peers(&client, &server);
+    ok(quicly_set_cc(client, &stub_type_acks));
+    ok(client->egress.loss.sentmap.bytes_in_flight == 0);
+    stub_num_sent = 0;
+
+    /* after a second with nothing in flight, the rate covers the send to the ack, not the idle time */
+    quic_now += 1000;
+    quicly_stream_t *stream;
+    ok(quicly_open_stream(client, &stream, 0) == 0);
+    ok(quicly_streambuf_egress_write(stream, "a", 1) == 0);
+    ok(transmit(client, server) == 1);
+    ok(stub_num_sent == 1);
+    quic_now += 20;
+    send_ack_only(server, client);
+    ok(stub_acked_bytes == stub_sent[0]);
+    ok(stub_ack_params.bandwidth_estimate == (uint64_t)stub_sent[0] * 1000 / 20);
+
+    quicly_free(client);
+    quicly_free(server);
+}
+
 static void test_setup_send_context(quicly_conn_t *conn, quicly_send_context_t *s, struct iovec *datagram, void *buf,
                                     size_t bufsize)
 {
@@ -2444,6 +2534,8 @@ int main(int argc, char **argv)
     subtest("set_cc_dispose", test_set_cc_dispose);
     subtest("zero_byte_acks", test_zero_byte_acks);
     subtest("cc_send_time_inputs", test_cc_send_time_inputs);
+    subtest("delivery_rate", test_delivery_rate);
+    subtest("delivery_rate_after_idle", test_delivery_rate_after_idle);
     subtest("cc-accel-context", test_cc_accel_context);
     subtest("ecn-index-from-bits", test_ecn_index_from_bits);
     subtest("resume-sendrate", test_resume_sendrate);
